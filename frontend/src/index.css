@@ -1,0 +1,19 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    background-color: theme('colors.surface.base');
+    color: theme('colors.slate.100');
+    font-family: theme('fontFamily.sans');
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Scrollbar styling — dark transit theme */
+  ::-webkit-scrollbar       { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: theme('colors.surface.base'); }
+  ::-webkit-scrollbar-thumb { background: theme('colors.surface.border');
+                               border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: theme('colors.accent.muted'); }
+}
