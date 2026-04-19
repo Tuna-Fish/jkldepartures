@@ -1,6 +1,6 @@
 // src/pages/StopPage.tsx
 import { useParams, useNavigate } from 'react-router-dom'
-import { useMemo } from 'react'
+import { useMemo, useRef, useEffect } from 'react'
 import DepartureBoard from '../components/DepartureBoard'
 import AlertBanner from '../components/AlertBanner'
 import FreshnessIndicator from '../components/FreshnessIndicator'
@@ -16,16 +16,23 @@ function useMockDepartures(stopId: string): {
   isError: boolean
   fetchedAt: number | null
 } {
-  const fetchedAt = useMemo(() => Date.now(), [stopId])
+  const fetchedAt = useRef<number>(Date.now())
+  const nowRef = useRef<number>(Math.floor(Date.now() / 1000))
 
-  const now = Math.floor(Date.now() / 1000)
+  // Reset refs when stopId changes
+  useEffect(() => {
+    fetchedAt.current = Date.now()
+    nowRef.current = Math.floor(Date.now() / 1000)
+  }, [stopId])
+
+  const now = nowRef.current
 
   const departures: Departure[] = useMemo(() => [
     {
       tripId: 'trip-1', routeId: '4',
       headsign: 'Mattilanniemi',
       scheduledDeparture: now + 4 * 60,
-      realtimeDeparture:  now + 8 * 60,   // 4 min late
+      realtimeDeparture:  now + 8 * 60,
       delaySeconds: 240, status: 'DELAYED',
       hasRealtime: true, platform: 'A',
     },
@@ -69,9 +76,9 @@ function useMockDepartures(stopId: string): {
       delaySeconds: 0, status: 'NO_DATA',
       hasRealtime: false, platform: 'D',
     },
-  ], [stopId])
+  ], [now])
 
-  return { departures, isLoading: false, isError: false, fetchedAt }
+  return { departures, isLoading: false, isError: false, fetchedAt: fetchedAt.current }
 }
 
 // ── Stop metadata ─────────────────────────────────────────────────────────────

@@ -1,50 +1,60 @@
 // src/pages/AlertsPage.tsx
 import FreshnessIndicator from '../components/FreshnessIndicator'
 import type { ServiceAlert } from '../api/types'
+import { useMemo, useRef } from 'react'
 
 // ── Mock data ─────────────────────────────────────────────────────────────────
 // Replace with useAlerts() hook in Step 4
 
-const now = Math.floor(Date.now() / 1000)
+export default function AlertsPage() {
+  const fetchedAtRef = useRef<number>(Date.now())
+  const fetchedAt = fetchedAtRef.current
 
-const MOCK_ALERTS: ServiceAlert[] = [
-  {
-    id: 'alert-1',
-    headerText: 'Route 4 — Significant delays',
-    descriptionText:
-      'Road works on Kauppakatu between Keskusta and Mattilanniemi. Delays of up to 8 minutes expected.',
-    severity: 'WARNING',
-    effect: 'SIGNIFICANT_DELAYS',
-    activePeriods: [{ start: now - 3600, end: now + 7200 }],
-    affectedRoutes: ['4'],
-    affectedStops: ['1111', '2203'],
-    url: undefined,
-  },
-  {
-    id: 'alert-2',
-    headerText: 'Route 1 — Partial cancellation',
-    descriptionText:
-      'Departures at 14:50 and 15:20 from Keskusta are cancelled due to driver shortage. Next scheduled departure at 15:50.',
-    severity: 'SEVERE',
-    effect: 'NO_SERVICE',
-    activePeriods: [{ start: now - 1800, end: now + 3600 }],
-    affectedRoutes: ['1'],
-    affectedStops: ['1111'],
-    url: undefined,
-  },
-  {
-    id: 'alert-3',
-    headerText: 'All routes — Resolved',
-    descriptionText:
-      'Morning delays on routes 7, 9 due to icy conditions. Resolved at 09:45.',
-    severity: 'INFO',
-    effect: 'MODIFIED_SERVICE',
-    activePeriods: [{ start: now - 14400, end: now - 3600 }],
-    affectedRoutes: ['7', '9'],
-    affectedStops: [],
-    url: undefined,
-  },
-]
+  const alerts = useMemo((): ServiceAlert[] => {
+    const now = Math.floor(Date.now() / 1000)
+    return [
+      {
+        id: 'alert-1',
+        headerText: 'Route 4 — Significant delays',
+        descriptionText:
+          'Road works on Kauppakatu between Keskusta and Mattilanniemi. Delays of up to 8 minutes expected.',
+        severity: 'WARNING',
+        effect: 'SIGNIFICANT_DELAYS',
+        activePeriods: [{ start: now - 3600, end: now + 7200 }],
+        affectedRoutes: ['4'],
+        affectedStops: ['1111', '2203'],
+        url: undefined,
+      },
+      {
+        id: 'alert-2',
+        headerText: 'Route 1 — Partial cancellation',
+        descriptionText:
+          'Departures at 14:50 and 15:20 from Keskusta are cancelled due to driver shortage. Next scheduled departure at 15:50.',
+        severity: 'SEVERE',
+        effect: 'NO_SERVICE',
+        activePeriods: [{ start: now - 1800, end: now + 3600 }],
+        affectedRoutes: ['1'],
+        affectedStops: ['1111'],
+        url: undefined,
+      },
+      {
+        id: 'alert-3',
+        headerText: 'All routes — Resolved',
+        descriptionText:
+          'Morning delays on routes 7, 9 due to icy conditions. Resolved at 09:45.',
+        severity: 'INFO',
+        effect: 'MODIFIED_SERVICE',
+        activePeriods: [{ start: now - 14400, end: now - 3600 }],
+        affectedRoutes: ['7', '9'],
+        affectedStops: [],
+        url: undefined,
+      },
+    ]
+  }, [])
+
+  const active   = alerts.filter(a => !isResolved(a))
+  const resolved = alerts.filter(a =>  isResolved(a))
+  // ... rest of component unchanged
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
