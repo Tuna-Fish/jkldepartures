@@ -1,0 +1,7 @@
+flowchart LR
+    A[User Browser] --> B[React Frontend]
+    B --> C[Rust Backend API]
+    C --> D[Official Jyväskylä Transport API]
+    D --> C
+    C --> B
+    B --> A

@@ -1,0 +1,6 @@
+flowchart TB
+    A[Request from Frontend] --> B[API Handler]
+    B --> C[Fetch External Transport API]
+    C --> D[Data Parsing & Normalization]
+    D --> E[Optional Caching Layer]
+    E --> F[Return Clean JSON Response]

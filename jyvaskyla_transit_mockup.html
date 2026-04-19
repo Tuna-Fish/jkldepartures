@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Jyväskylä Transit — UI Mockup</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@500;600&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    body { background: #1a1a2e; display: flex; justify-content: center; padding: 32px 16px; min-height: 100vh; margin: 0; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    .app { background: #0d0f14; min-height: 600px; font-family: 'DM Sans', system-ui, sans-serif; color: #f1f5f9; max-width: 420px; width: 100%; margin: 0 auto; border-radius: 16px; overflow: hidden; border: 1px solid #2a3347; }
+    .screen { display: none; flex-direction: column; min-height: 600px; }
+    .screen.active { display: flex; }
+    .topbar { background: #161b24; border-bottom: 1px solid #2a3347; padding: 14px 16px; display: flex; align-items: center; gap: 12px; }
+    .topbar-title { font-size: 15px; font-weight: 600; flex: 1; letter-spacing: 0.01em; }
+    .back-btn { width: 32px; height: 32px; border-radius: 8px; background: #1e2535; border: 1px solid #2a3347; display: flex; align-items: center; justify-content: center; cursor: pointer; flex-shrink: 0; }
+    .back-btn svg { width: 16px; height: 16px; stroke: #94a3b8; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+    .freshness { font-size: 11px; color: #64748b; display: flex; align-items: center; gap: 5px; }
+    .fresh-dot { width: 6px; height: 6px; border-radius: 50%; background: #4CAF50; flex-shrink: 0; }
+    .fresh-dot.stale { background: #FF9800; }
+    .content { flex: 1; padding: 16px; display: flex; flex-direction: column; gap: 16px; overflow: auto; }
+    .hero { padding: 32px 0 8px; display: flex; flex-direction: column; gap: 6px; }
+    .hero-title { font-size: 22px; font-weight: 700; letter-spacing: -0.02em; }
+    .hero-sub { font-size: 13px; color: #64748b; }
+    .search-wrap { position: relative; }
+    .search-input { width: 100%; background: #161b24; border: 1px solid #2a3347; border-radius: 12px; padding: 12px 12px 12px 40px; font-size: 15px; color: #f1f5f9; outline: none; font-family: inherit; }
+    .search-input:focus { border-color: #2979FF; }
+    .search-icon { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); width: 16px; height: 16px; stroke: #64748b; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+    .section-label { font-size: 11px; font-weight: 600; color: #64748b; text-transform: uppercase; letter-spacing: 0.08em; }
+    .recent-list { display: flex; flex-direction: column; gap: 8px; }
+    .recent-item { background: #161b24; border: 1px solid #2a3347; border-radius: 12px; padding: 12px 14px; display: flex; align-items: center; gap: 12px; cursor: pointer; transition: border-color 0.15s; }
+    .recent-item:hover { border-color: #2979FF; }
+    .stop-badge { background: #1e2535; border-radius: 8px; padding: 4px 8px; font-size: 12px; font-weight: 700; font-family: 'DM Mono', monospace; color: #94a3b8; flex-shrink: 0; }
+    .recent-info { flex: 1; }
+    .recent-name { font-size: 14px; font-weight: 500; }
+    .recent-routes { font-size: 12px; color: #64748b; margin-top: 2px; }
+    .chevron { width: 14px; height: 14px; stroke: #2a3347; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; }
+    .alert-banner { border-radius: 10px; padding: 11px 13px; display: flex; gap: 10px; align-items: flex-start; }
+    .alert-banner.severe { background: #3b1a1a; border: 1px solid #7f1d1d; }
+    .alert-banner.warning { background: #2d1f0a; border: 1px solid #78350f; }
+    .alert-banner.info { background: #0c1f3a; border: 1px solid #1e3a5f; }
+    .alert-icon { width: 16px; height: 16px; flex-shrink: 0; margin-top: 1px; }
+    .alert-text { flex: 1; }
+    .alert-title { font-size: 13px; font-weight: 600; }
+    .alert-banner.severe .alert-title { color: #fca5a5; }
+    .alert-banner.warning .alert-title { color: #fcd34d; }
+    .alert-banner.info .alert-title { color: #93c5fd; }
+    .alert-desc { font-size: 12px; margin-top: 3px; }
+    .alert-banner.severe .alert-desc { color: #f87171; }
+    .alert-banner.warning .alert-desc { color: #fbbf24; }
+    .alert-banner.info .alert-desc { color: #60a5fa; }
+    .stop-header { background: #161b24; border: 1px solid #2a3347; border-radius: 12px; padding: 14px; }
+    .stop-header-name { font-size: 17px; font-weight: 700; }
+    .stop-header-meta { display: flex; align-items: center; gap: 8px; margin-top: 5px; }
+    .stop-id-pill { background: #1e2535; border-radius: 6px; padding: 3px 7px; font-size: 11px; font-family: 'DM Mono', monospace; color: #64748b; }
+    .departures-list { display: flex; flex-direction: column; gap: 10px; }
+    .dep-card { background: #161b24; border: 1px solid #2a3347; border-radius: 12px; padding: 13px 14px; display: flex; gap: 13px; align-items: stretch; cursor: pointer; transition: border-color 0.15s; }
+    .dep-card:hover { border-color: #2a3a5a; }
+    .dep-card.cancelled { opacity: 0.55; border-style: dashed; }
+    .route-pill { width: 44px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 15px; font-weight: 700; font-family: 'DM Mono', monospace; flex-shrink: 0; min-height: 44px; }
+    .r-blue { background: #1565C0; color: #bbdefb; }
+    .r-green { background: #2E7D32; color: #c8e6c9; }
+    .r-red { background: #C62828; color: #ffcdd2; }
+    .r-orange { background: #E65100; color: #ffe0b2; }
+    .r-purple { background: #6A1B9A; color: #e1bee7; }
+    .r-teal { background: #00695C; color: #b2dfdb; }
+    .dep-info { flex: 1; display: flex; flex-direction: column; gap: 4px; }
+    .dep-headsign { font-size: 14px; font-weight: 600; }
+    .dep-meta { font-size: 12px; color: #64748b; display: flex; align-items: center; gap: 6px; }
+    .dep-right { display: flex; flex-direction: column; align-items: flex-end; justify-content: space-between; flex-shrink: 0; }
+    .dep-countdown { font-size: 20px; font-weight: 700; font-family: 'DM Mono', monospace; color: #f1f5f9; line-height: 1; }
+    .dep-countdown.soon { color: #4CAF50; }
+    .dep-countdown.now { color: #FF9800; }
+    .dep-time { font-size: 11px; color: #64748b; font-family: 'DM Mono', monospace; margin-top: 4px; }
+    .status-pill { font-size: 10px; font-weight: 600; padding: 3px 7px; border-radius: 5px; letter-spacing: 0.04em; }
+    .s-ontime { background: #1a3a1a; color: #4ade80; }
+    .s-delayed { background: #3a2a00; color: #fbbf24; }
+    .s-cancelled { background: #3a1010; color: #f87171; }
+    .s-nodata { background: #1e2535; color: #64748b; }
+    .dep-platform { font-size: 11px; color: #64748b; }
+    .map-placeholder { background: #161b24; border: 1px solid #2a3347; border-radius: 12px; height: 260px; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 10px; position: relative; overflow: hidden; }
+    .map-grid { position: absolute; inset: 0; opacity: 0.07; }
+    .map-label { font-size: 13px; color: #64748b; z-index: 1; }
+    .bus-dot { width: 10px; height: 10px; border-radius: 50%; position: absolute; z-index: 2; }
+    .bus-dot::after { content: ''; position: absolute; inset: -3px; border-radius: 50%; border: 1.5px solid currentColor; opacity: 0.4; }
+    .b1 { background: #2979FF; color: #2979FF; top: 38%; left: 42%; }
+    .b2 { background: #4CAF50; color: #4CAF50; top: 55%; left: 61%; }
+    .b3 { background: #FF9800; color: #FF9800; top: 28%; left: 70%; }
+    .b4 { background: #2979FF; color: #2979FF; top: 65%; left: 30%; }
+    .b5 { background: #4CAF50; color: #4CAF50; top: 45%; left: 22%; }
+    .map-stop-dot { width: 7px; height: 7px; border-radius: 50%; background: #f1f5f9; position: absolute; z-index: 2; border: 1.5px solid #0d0f14; }
+    .s1 { top: 40%; left: 44%; } .s2 { top: 56%; left: 63%; } .s3 { top: 30%; left: 68%; }
+    .map-vehicle-list { display: flex; flex-direction: column; gap: 8px; }
+    .vehicle-row { background: #161b24; border: 1px solid #2a3347; border-radius: 10px; padding: 11px 13px; display: flex; align-items: center; gap: 12px; }
+    .vehicle-info { flex: 1; }
+    .vehicle-name { font-size: 13px; font-weight: 500; }
+    .vehicle-sub { font-size: 11px; color: #64748b; margin-top: 2px; }
+    .vehicle-status { font-size: 11px; font-weight: 600; padding: 3px 7px; border-radius: 5px; }
+    .vs-moving { background: #1a3a1a; color: #4ade80; }
+    .vs-stopped { background: #3a2a00; color: #fbbf24; }
+    .bottom-nav { background: #161b24; border-top: 1px solid #2a3347; display: flex; padding: 0; }
+    .nav-btn { flex: 1; padding: 12px 0 10px; display: flex; flex-direction: column; align-items: center; gap: 4px; cursor: pointer; border: none; background: none; color: #64748b; font-size: 10px; font-family: inherit; transition: color 0.15s; }
+    .nav-btn.active { color: #2979FF; }
+    .nav-btn svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+    .pill-badge { background: #2979FF; color: #fff; border-radius: 10px; padding: 1px 6px; font-size: 10px; font-weight: 700; font-family: 'DM Mono', monospace; }
+  </style>
+</head>
+<body>
+
+<div class="app">
+
+  <!-- HOME SCREEN -->
+  <div id="screen-home" class="screen active">
+    <div class="content">
+      <div class="hero">
+        <div class="hero-title">Good morning</div>
+        <div class="hero-sub">Jyväskylä public transport</div>
+      </div>
+      <div class="search-wrap">
+        <svg class="search-icon" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.35-4.35"/></svg>
+        <input class="search-input" placeholder="Search stop name or number…" id="search-input" oninput="filterStops(this.value)" />
+      </div>
+      <div class="alert-banner warning">
+        <svg class="alert-icon" viewBox="0 0 24 24" fill="none" stroke="#fbbf24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        <div class="alert-text">
+          <div class="alert-title">Route 4 — delays expected</div>
+          <div class="alert-desc">Road works on Kauppakatu until 18:00</div>
+        </div>
+      </div>
+      <div class="section-label">Recent stops</div>
+      <div class="recent-list" id="recent-list">
+        <div class="recent-item" onclick="goToStop('Keskusta (M)')">
+          <div class="stop-badge">1111</div>
+          <div class="recent-info"><div class="recent-name">Keskusta (M)</div><div class="recent-routes">Routes 1, 4, 7, 12, 25</div></div>
+          <svg class="chevron" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg>
+        </div>
+        <div class="recent-item" onclick="goToStop('Mattilanniemi')">
+          <div class="stop-badge">2203</div>
+          <div class="recent-info"><div class="recent-name">Mattilanniemi</div><div class="recent-routes">Routes 12, 25</div></div>
+          <svg class="chevron" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg>
+        </div>
+        <div class="recent-item" onclick="goToStop('Yliopisto')">
+          <div class="stop-badge">3041</div>
+          <div class="recent-info"><div class="recent-name">Yliopisto</div><div class="recent-routes">Routes 7, 8, 9</div></div>
+          <svg class="chevron" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg>
+        </div>
+        <div class="recent-item" onclick="goToStop('Hämeenkatu')">
+          <div class="stop-badge">1084</div>
+          <div class="recent-info"><div class="recent-name">Hämeenkatu</div><div class="recent-routes">Routes 1, 3, 6</div></div>
+          <svg class="chevron" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg>
+        </div>
+      </div>
+    </div>
+    <div class="bottom-nav">
+      <button class="nav-btn active" onclick="showScreen('home')"><svg viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>Home</button>
+      <button class="nav-btn" onclick="showScreen('departures')"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="12" y1="3" x2="12" y2="21"/></svg>Departures</button>
+      <button class="nav-btn" onclick="showScreen('map')"><svg viewBox="0 0 24 24"><polygon points="3 6 9 3 15 6 21 3 21 18 15 21 9 18 3 21"/><line x1="9" y1="3" x2="9" y2="18"/><line x1="15" y1="6" x2="15" y2="21"/></svg>Map</button>
+      <button class="nav-btn" onclick="showScreen('alerts')"><svg viewBox="0 0 24 24"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>Alerts<span class="pill-badge">2</span></button>
+    </div>
+  </div>
+
+  <!-- DEPARTURES SCREEN -->
+  <div id="screen-departures" class="screen">
+    <div class="topbar">
+      <div class="back-btn" onclick="showScreen('home')"><svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg></div>
+      <div class="topbar-title" id="dep-stop-name">Keskusta (M)</div>
+      <div class="freshness"><div class="fresh-dot"></div><span>Live</span></div>
+    </div>
+    <div class="content">
+      <div class="stop-header">
+        <div class="stop-header-name" id="dep-stop-name2">Keskusta (M)</div>
+        <div class="stop-header-meta">
+          <div class="stop-id-pill">1111</div>
+          <div style="font-size:12px;color:#64748b">Kauppakatu, platform A</div>
+        </div>
+      </div>
+      <div class="alert-banner warning">
+        <svg class="alert-icon" viewBox="0 0 24 24" fill="none" stroke="#fbbf24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        <div class="alert-text">
+          <div class="alert-title">Route 4 — delays expected</div>
+          <div class="alert-desc">Road works on Kauppakatu until 18:00</div>
+        </div>
+      </div>
+      <div class="departures-list">
+        <div class="dep-card">
+          <div class="route-pill r-blue">4</div>
+          <div class="dep-info">
+            <div class="dep-headsign">Mattilanniemi</div>
+            <div class="dep-meta"><span class="status-pill s-delayed">+4 min</span><span>via Kauppakatu</span></div>
+            <div class="dep-platform">Platform A</div>
+          </div>
+          <div class="dep-right">
+            <div class="dep-countdown now">4<span style="font-size:12px;font-weight:400"> min</span></div>
+            <div class="dep-time">14:32</div>
+          </div>
+        </div>
+        <div class="dep-card">
+          <div class="route-pill r-green">12</div>
+          <div class="dep-info">
+            <div class="dep-headsign">Keljonkangas</div>
+            <div class="dep-meta"><span class="status-pill s-ontime">On time</span><span>via Yliopisto</span></div>
+            <div class="dep-platform">Platform B</div>
+          </div>
+          <div class="dep-right">
+            <div class="dep-countdown soon">7<span style="font-size:12px;font-weight:400"> min</span></div>
+            <div class="dep-time">14:35</div>
+          </div>
+        </div>
+        <div class="dep-card">
+          <div class="route-pill r-purple">25</div>
+          <div class="dep-info">
+            <div class="dep-headsign">Seppälä</div>
+            <div class="dep-meta"><span class="status-pill s-ontime">On time</span><span>via Tourula</span></div>
+            <div class="dep-platform">Platform A</div>
+          </div>
+          <div class="dep-right">
+            <div class="dep-countdown">11<span style="font-size:12px;font-weight:400"> min</span></div>
+            <div class="dep-time">14:39</div>
+          </div>
+        </div>
+        <div class="dep-card">
+          <div class="route-pill r-orange">7</div>
+          <div class="dep-info">
+            <div class="dep-headsign">Kuokkala</div>
+            <div class="dep-meta"><span class="status-pill s-ontime">On time</span><span>via Keskussairaala</span></div>
+            <div class="dep-platform">Platform C</div>
+          </div>
+          <div class="dep-right">
+            <div class="dep-countdown">14<span style="font-size:12px;font-weight:400"> min</span></div>
+            <div class="dep-time">14:42</div>
+          </div>
+        </div>
+        <div class="dep-card cancelled">
+          <div class="route-pill r-red">1</div>
+          <div class="dep-info">
+            <div class="dep-headsign">Palokka</div>
+            <div class="dep-meta"><span class="status-pill s-cancelled">Cancelled</span></div>
+            <div class="dep-platform">Platform B</div>
+          </div>
+          <div class="dep-right">
+            <div class="dep-countdown" style="color:#64748b;text-decoration:line-through;font-size:16px">14:50</div>
+            <div class="dep-time" style="color:#64748b">sched.</div>
+          </div>
+        </div>
+        <div class="dep-card">
+          <div class="route-pill r-teal">9</div>
+          <div class="dep-info">
+            <div class="dep-headsign">Tikkakoski</div>
+            <div class="dep-meta"><span class="status-pill s-nodata">No data</span><span>via Lentoasema</span></div>
+            <div class="dep-platform">Platform D</div>
+          </div>
+          <div class="dep-right">
+            <div class="dep-countdown" style="color:#64748b">21<span style="font-size:12px;font-weight:400"> min</span></div>
+            <div class="dep-time">14:49</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="bottom-nav">
+      <button class="nav-btn" onclick="showScreen('home')"><svg viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>Home</button>
+      <button class="nav-btn active" onclick="showScreen('departures')"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="12" y1="3" x2="12" y2="21"/></svg>Departures</button>
+      <button class="nav-btn" onclick="showScreen('map')"><svg viewBox="0 0 24 24"><polygon points="3 6 9 3 15 6 21 3 21 18 15 21 9 18 3 21"/><line x1="9" y1="3" x2="9" y2="18"/><line x1="15" y1="6" x2="15" y2="21"/></svg>Map</button>
+      <button class="nav-btn" onclick="showScreen('alerts')"><svg viewBox="0 0 24 24"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>Alerts<span class="pill-badge">2</span></button>
+    </div>
+  </div>
+
+  <!-- MAP SCREEN -->
+  <div id="screen-map" class="screen">
+    <div class="topbar">
+      <div class="topbar-title">Live vehicles</div>
+      <div class="freshness"><div class="fresh-dot"></div><span>1s refresh</span></div>
+    </div>
+    <div class="content">
+      <div class="map-placeholder">
+        <svg class="map-grid" viewBox="0 0 300 260" preserveAspectRatio="none"><defs><pattern id="g" width="30" height="30" patternUnits="userSpaceOnUse"><path d="M 30 0 L 0 0 0 30" fill="none" stroke="#ffffff" stroke-width="0.5"/></pattern></defs><rect width="300" height="260" fill="url(#g)"/></svg>
+        <div class="bus-dot b1"></div>
+        <div class="bus-dot b2"></div>
+        <div class="bus-dot b3"></div>
+        <div class="bus-dot b4"></div>
+        <div class="bus-dot b5"></div>
+        <div class="map-stop-dot s1"></div>
+        <div class="map-stop-dot s2"></div>
+        <div class="map-stop-dot s3"></div>
+        <div class="map-label">Leaflet map renders here</div>
+      </div>
+      <div class="section-label">Nearby vehicles</div>
+      <div class="map-vehicle-list">
+        <div class="vehicle-row">
+          <div style="width:36px;height:36px;border-radius:8px;background:#1565C0;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;font-family:'DM Mono',monospace;color:#bbdefb;flex-shrink:0">4</div>
+          <div class="vehicle-info"><div class="vehicle-name">Route 4 — Mattilanniemi</div><div class="vehicle-sub">350m away · next stop Kauppakatu</div></div>
+          <div class="vehicle-status vs-moving">Moving</div>
+        </div>
+        <div class="vehicle-row">
+          <div style="width:36px;height:36px;border-radius:8px;background:#2E7D32;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;font-family:'DM Mono',monospace;color:#c8e6c9;flex-shrink:0">12</div>
+          <div class="vehicle-info"><div class="vehicle-name">Route 12 — Keljonkangas</div><div class="vehicle-sub">At stop Yliopisto · 0 min delay</div></div>
+          <div class="vehicle-status vs-stopped">At stop</div>
+        </div>
+        <div class="vehicle-row">
+          <div style="width:36px;height:36px;border-radius:8px;background:#E65100;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;font-family:'DM Mono',monospace;color:#ffe0b2;flex-shrink:0">7</div>
+          <div class="vehicle-info"><div class="vehicle-name">Route 7 — Kuokkala</div><div class="vehicle-sub">820m away · +2 min delay</div></div>
+          <div class="vehicle-status vs-moving">Moving</div>
+        </div>
+      </div>
+    </div>
+    <div class="bottom-nav">
+      <button class="nav-btn" onclick="showScreen('home')"><svg viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>Home</button>
+      <button class="nav-btn" onclick="showScreen('departures')"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="12" y1="3" x2="12" y2="21"/></svg>Departures</button>
+      <button class="nav-btn active" onclick="showScreen('map')"><svg viewBox="0 0 24 24"><polygon points="3 6 9 3 15 6 21 3 21 18 15 21 9 18 3 21"/><line x1="9" y1="3" x2="9" y2="18"/><line x1="15" y1="6" x2="15" y2="21"/></svg>Map</button>
+      <button class="nav-btn" onclick="showScreen('alerts')"><svg viewBox="0 0 24 24"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>Alerts<span class="pill-badge">2</span></button>
+    </div>
+  </div>
+
+  <!-- ALERTS SCREEN -->
+  <div id="screen-alerts" class="screen">
+    <div class="topbar">
+      <div class="topbar-title">Service alerts</div>
+      <div class="freshness"><div class="fresh-dot stale"></div><span>2 min ago</span></div>
+    </div>
+    <div class="content">
+      <div class="section-label">Active now</div>
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <div style="background:#161b24;border:1px solid #2a3347;border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:10px">
+          <div style="display:flex;align-items:center;gap:8px">
+            <div style="width:32px;height:28px;border-radius:6px;background:#1565C0;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;font-family:'DM Mono',monospace;color:#bbdefb;flex-shrink:0">4</div>
+            <div style="font-size:14px;font-weight:600">Route 4 — Significant delays</div>
+            <div style="margin-left:auto;font-size:10px;font-weight:600;padding:3px 7px;border-radius:5px;background:#3a2a00;color:#fbbf24">WARNING</div>
+          </div>
+          <div style="font-size:13px;color:#94a3b8;line-height:1.6">Road works on Kauppakatu between Keskusta and Mattilanniemi. Delays of up to 8 minutes expected.</div>
+          <div style="font-size:11px;color:#64748b;border-top:1px solid #2a3347;padding-top:8px">Active until 18:00 today</div>
+        </div>
+        <div style="background:#161b24;border:1px solid #2a3347;border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:10px">
+          <div style="display:flex;align-items:center;gap:8px">
+            <div style="width:32px;height:28px;border-radius:6px;background:#C62828;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;font-family:'DM Mono',monospace;color:#ffcdd2;flex-shrink:0">1</div>
+            <div style="font-size:14px;font-weight:600">Route 1 — Partial cancellation</div>
+            <div style="margin-left:auto;font-size:10px;font-weight:600;padding:3px 7px;border-radius:5px;background:#3a1010;color:#f87171">SEVERE</div>
+          </div>
+          <div style="font-size:13px;color:#94a3b8;line-height:1.6">Departures at 14:50 and 15:20 from Keskusta are cancelled due to driver shortage. Next scheduled departure at 15:50.</div>
+          <div style="font-size:11px;color:#64748b;border-top:1px solid #2a3347;padding-top:8px">Active until 16:00 today</div>
+        </div>
+      </div>
+      <div class="section-label" style="margin-top:4px">Earlier today</div>
+      <div style="background:#161b24;border:1px solid #2a3347;border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:8px;opacity:0.6">
+        <div style="display:flex;align-items:center;gap:8px">
+          <div style="font-size:14px;font-weight:600">All routes — Resolved</div>
+          <div style="margin-left:auto;font-size:10px;font-weight:600;padding:3px 7px;border-radius:5px;background:#1a3a1a;color:#4ade80">INFO</div>
+        </div>
+        <div style="font-size:13px;color:#94a3b8">Morning delays on routes 7, 9 due to icy conditions. Resolved at 09:45.</div>
+        <div style="font-size:11px;color:#64748b;border-top:1px solid #2a3347;padding-top:8px">Ended 09:45</div>
+      </div>
+    </div>
+    <div class="bottom-nav">
+      <button class="nav-btn" onclick="showScreen('home')"><svg viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>Home</button>
+      <button class="nav-btn" onclick="showScreen('departures')"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="12" y1="3" x2="12" y2="21"/></svg>Departures</button>
+      <button class="nav-btn" onclick="showScreen('map')"><svg viewBox="0 0 24 24"><polygon points="3 6 9 3 15 6 21 3 21 18 15 21 9 18 3 21"/><line x1="9" y1="3" x2="9" y2="18"/><line x1="15" y1="6" x2="15" y2="21"/></svg>Map</button>
+      <button class="nav-btn active" onclick="showScreen('alerts')"><svg viewBox="0 0 24 24"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>Alerts<span class="pill-badge">2</span></button>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  function showScreen(name) {
+    document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'))
+    document.getElementById('screen-' + name).classList.add('active')
+  }
+  function goToStop(name) {
+    document.getElementById('dep-stop-name').textContent = name
+    document.getElementById('dep-stop-name2').textContent = name
+    showScreen('departures')
+  }
+  const allStops = [
+    { id: '1111', name: 'Keskusta (M)',  routes: 'Routes 1, 4, 7, 12, 25' },
+    { id: '2203', name: 'Mattilanniemi', routes: 'Routes 12, 25' },
+    { id: '3041', name: 'Yliopisto',     routes: 'Routes 7, 8, 9' },
+    { id: '1084', name: 'Hämeenkatu',    routes: 'Routes 1, 3, 6' },
+    { id: '4012', name: 'Keljonkangas',  routes: 'Routes 12, 15' },
+    { id: '2110', name: 'Tourula',       routes: 'Routes 25, 26' },
+  ]
+  function filterStops(q) {
+    const list = document.getElementById('recent-list')
+    const filtered = q.length > 0
+      ? allStops.filter(s => s.name.toLowerCase().includes(q.toLowerCase()) || s.id.includes(q))
+      : allStops.slice(0, 4)
+    list.innerHTML = filtered.map(s => `
+      <div class="recent-item" onclick="goToStop('${s.name}')">
+        <div class="stop-badge">${s.id}</div>
+        <div class="recent-info">
+          <div class="recent-name">${s.name}</div>
+          <div class="recent-routes">${s.routes}</div>
+        </div>
+        <svg class="chevron" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg>
+      </div>`).join('')
+  }
+</script>
+</body>
+</html>
