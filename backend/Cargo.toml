@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+rouille = "3.6.2"
 gtfs-realtime = "0.2"
 prost = "0.14.1"
 prost-derive = "0.14.1"
