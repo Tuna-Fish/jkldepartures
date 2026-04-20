@@ -4,3 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+gtfs-realtime = "0.2"
+prost = "0.14.1"
+prost-derive = "0.14.1"
+serde = "1.0"
+prost-build = "0.14.1"
