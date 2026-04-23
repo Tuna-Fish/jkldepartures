@@ -1,0 +1,13 @@
+sequenceDiagram 
+    participant U as User
+    participant F as React Frontend
+    participant B as Rust Backend
+    participant API as Transport API
+
+    U->>F: Open stop page
+    F->>B: Request departures for stop
+    B->>API: Fetch live data
+    API-->>B: Raw transport data
+    B->>B: Parse & transform
+    B-->>F: Clean departure list
+    F-->>U: Render live departures
