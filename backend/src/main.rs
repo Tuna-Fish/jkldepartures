@@ -1,8 +1,77 @@
 use rouille::Request;
 use rouille::Response;
 use rouille::router;
+use arc_swap::ArcSwapOption;
+use std::sync::Arc;
+use std::thread;
+use std::time::Duration;
+use envconfig::Envconfig;
+use std::sync::LazyLock;
+use reqwest::blocking::Client;
+use reqwest::header::{HeaderValue, AUTHORIZATION};
+use bytes::Bytes;
+use gtfs_realtime::FeedMessage;
+use prost::Message;
+
+static ALERTS: ArcSwapOption<String> = ArcSwapOption::const_empty();
+
+static ASKCREDSSTRING: &str = r#"provide the api credentials as a base-64 encoded token
+in the environment variable APICREDS,
+see https://opendata.waltti.fi/getting-started"#;
+
+static SERVICEALERTENDPOINT: &str = "https://data.waltti.fi/jyvaskyla/api/gtfsrealtime/v1.0/feed/servicealert";
+
+#[derive(Envconfig)]
+pub struct Config {
+    #[envconfig(from = "APICREDS")]
+    pub creds: String
+}
+
+static CREDSHEADER: LazyLock<&'static str> = LazyLock::new(|| {
+    let config = Config::init_from_env().expect(ASKCREDSSTRING);
+    let token = format!("Basic {}", &config.creds );
+
+    Box::leak(token.into_boxed_str())
+});
+
+
+fn fetchwithauth(url: &str) -> Option<Bytes> {
+    let response = Client::new()
+        .get(url)
+        .header(AUTHORIZATION,HeaderValue::from_static(*CREDSHEADER))
+        .send().ok()?;
+    if !response.status().is_success() {
+        println!("Fetching alerts returned {}", response.status());
+        None
+    } else {
+        Some(response.bytes().ok()?)
+    }
+}
+
+fn fetch_alerts_as_json() -> Option<String> {
+    let bytes = fetchwithauth(SERVICEALERTENDPOINT)?;
+    let feed = FeedMessage::decode(bytes).ok()?;
+    let alerts: Vec<_> = feed.entity.into_iter()
+        .filter_map(|e| e.alert)
+        .collect();
+
+    serde_json::to_string(&alerts).ok()
+}
+
+
+
 
 fn main() {
+
+    thread::spawn(move || {
+       loop {
+           if let Some(json) = fetch_alerts_as_json() {
+               ALERTS.store(Some(Arc::new(json)));
+           }
+           thread::sleep(Duration::from_secs(61));
+       }
+    });
+
     rouille::start_server("0.0.0.0:8081", move |request| {
         //annoyingly, there seems to be no way to match "any multi-part path" in the router macro
         if request.method() == "OPTIONS" {
@@ -24,21 +93,27 @@ fn main() {
     });
 }
 
-fn stops(request: &Request) -> Response{
+fn stops(_request: &Request) -> Response{
     Response::text("stops")
 }
 
-fn stop(request: &Request, id: u64) -> Response{
+fn stop(_request: &Request, id: u64) -> Response{
     Response::text(format!("stop id {id}"))
 }
 
-fn departures(request: &Request, id: u64) -> Response{
+fn departures(_request: &Request, id: u64) -> Response{
     Response::text(format!("departures id {id}"))
 }
-fn alerts(request: &Request) -> Response{
-    Response::text("alerts")
+fn alerts(_request: &Request) -> Response{
+    let alertsguard = ALERTS.load();
+
+    match &*alertsguard {
+        Some(alertsjsonstring) => Response::text(&**alertsjsonstring),
+        None => Response::empty_404()
+    }
+
 }
-fn vehicles(request: &Request) -> Response{
+fn vehicles(_request: &Request) -> Response{
     Response::text("vehicles")
 }
 
