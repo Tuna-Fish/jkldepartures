@@ -12,14 +12,20 @@ use reqwest::header::{HeaderValue, AUTHORIZATION};
 use bytes::Bytes;
 use gtfs_realtime::FeedMessage;
 use prost::Message;
+use zip::ZipArchive;
+use std::io::Cursor;
+use std::collections::HashMap;
+use std::io::Read;
 
 static ALERTS: ArcSwapOption<String> = ArcSwapOption::const_empty();
 
 static ASKCREDSSTRING: &str = r#"provide the api credentials as a base-64 encoded token
 in the environment variable APICREDS,
-see https://opendata.waltti.fi/getting-started"#;
+see https://opendata.waltti.fi/getting-started
+"#;
 
 static SERVICEALERTENDPOINT: &str = "https://data.waltti.fi/jyvaskyla/api/gtfsrealtime/v1.0/feed/servicealert";
+static STATICDATAENDPOINT: &str = "https://tvv.fra1.digitaloceanspaces.com/209.zip";
 
 #[derive(Envconfig)]
 pub struct Config {
@@ -34,6 +40,30 @@ static CREDSHEADER: LazyLock<&'static str> = LazyLock::new(|| {
     Box::leak(token.into_boxed_str())
 });
 
+
+fn fetchstaticdata() -> Result<HashMap<String,Vec<u8>>, Box<dyn std::error::Error>> {
+    let response = Client::new()
+        .get(STATICDATAENDPOINT)
+        .send()?;
+
+    if !response.status().is_success() {
+        println!("{}",response.status());
+    }
+
+    let requestbytes: Bytes = response.bytes()?;
+    let mut zip = ZipArchive::new(Cursor::new(requestbytes))?;
+    let mut filemap: HashMap<String, Vec<u8>> = HashMap::new();
+
+    for i in 0..zip.len() {
+        let mut file = zip.by_index(i)?;
+        let name = file.name().to_string();
+        let mut contents = Vec::with_capacity(file.size().try_into().unwrap());
+        file.read_to_end(&mut contents)?;
+        filemap.insert(name, contents);
+    }
+
+    Ok(filemap)
+}
 
 fn fetchwithauth(url: &str) -> Option<Bytes> {
     let response = Client::new()
@@ -61,8 +91,12 @@ fn fetch_alerts_as_json() -> Option<String> {
 
 
 
-fn main() {
-
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    //for debugging
+    let staticdata = fetchstaticdata()?;
+    for (key, value) in &staticdata {
+        println!("{}: {}", key, value.len());
+    }
     thread::spawn(move || {
        loop {
            if let Some(json) = fetch_alerts_as_json() {
