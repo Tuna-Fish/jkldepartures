@@ -110,6 +110,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         //annoyingly, there seems to be no way to match "any multi-part path" in the router macro
         if request.method() == "OPTIONS" {
             rouille::Response::empty_204()
+                //make options responses last a day
                 .with_unique_header("Access-Control-Max-Age", "86400")
         } else {
             router!(request,
@@ -121,6 +122,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 _ => Response::empty_404()
             )
         }
+            //disabling CORS, we don't care, we have no writes
             .with_unique_header("Access-Control-Allow-Origin", "*")
             .with_unique_header("Access-Control-Allow-Methods", "GET, OPTIONS")
             .with_unique_header("Access-Control-Allow-Headers", "*")
