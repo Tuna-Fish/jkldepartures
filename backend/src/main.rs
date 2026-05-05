@@ -15,7 +15,12 @@ use prost::Message;
 use zip::ZipArchive;
 use std::io::Cursor;
 use std::collections::HashMap;
+use std::hash::Hash;
 use std::io::Read;
+use serde_json::json;
+use serde_json::Value;
+use std::time::{SystemTime, UNIX_EPOCH};
+use csv::ReaderBuilder;
 
 static ALERTS: ArcSwapOption<String> = ArcSwapOption::const_empty();
 
@@ -77,18 +82,70 @@ fn fetchwithauth(url: &str) -> Option<Bytes> {
         Some(response.bytes().ok()?)
     }
 }
+// Adds names alongside id:s, and removes null values from response
+// (unless they are just added unfound names)
+fn process_jsonalerts(value: &mut Value, stop_names: &HashMap<String,String>){
+    match value{
+        Value::Object(map) => {
+            let mut additions = Vec::new();
 
-fn fetch_alerts_as_json() -> Option<String> {
+            if let Some(Value::String(id)) = map.get("stop_id") {
+                let name = stop_names.get(id).cloned();
+                additions.push(("stop_name", json!(name)));
+            }
+            for (k,v) in additions {
+                map.insert(k.to_string(), v);
+            }
+
+            map.retain(|k,v| !v.is_null()|| k == "stop_name");
+
+            for v in map.values_mut() {
+                process_jsonalerts(v, stop_names);
+            }
+        }
+        Value::Array(arr) => {
+            for v in arr.iter_mut() {
+                process_jsonalerts(v, stop_names);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn fetch_alerts_as_json(stop_names : &HashMap<String,String>) -> Option<String> {
     let bytes = fetchwithauth(SERVICEALERTENDPOINT)?;
+    let time = SystemTime::now().duration_since(UNIX_EPOCH).expect("time did not work").as_millis() as i64;
     let feed = FeedMessage::decode(bytes).ok()?;
     let alerts: Vec<_> = feed.entity.into_iter()
         .filter_map(|e| e.alert)
         .collect();
+    let mut response : Value = json!({
+        "fetchedAt": time,
+        "alerts": alerts
+    });
 
-    serde_json::to_string(&alerts).ok()
+
+    process_jsonalerts(&mut response, stop_names);
+    serde_json::to_string(&response).ok()
 }
 
+fn parse_stop_names(stops : &Vec<u8>) -> HashMap<String, String> {
+    let mut map = HashMap::new();
+    let mut rdr = ReaderBuilder::new().has_headers(true).from_reader(stops.as_slice());
 
+    // byte records avoids potential errors in utf8 parsing
+    for result in rdr.byte_records() {
+        if let Ok(record) = result {
+            if let(Some(id_bytes), Some(name_bytes)) = (record.get(0), record.get(2)) {
+                let id = String::from_utf8_lossy(id_bytes).into_owned();
+                let name = String::from_utf8_lossy(name_bytes).into_owned();
+
+                map.insert(id,name);
+            }
+        }
+    }
+    map
+}
 
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -97,9 +154,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for (key, value) in &staticdata {
         println!("{}: {}", key, value.len());
     }
+    let stop_names = parse_stop_names(staticdata.get("stops.txt").expect("Waltti failed to return stup data"));
+
     thread::spawn(move || {
        loop {
-           if let Some(json) = fetch_alerts_as_json() {
+           if let Some(json) = fetch_alerts_as_json(&stop_names) {
                ALERTS.store(Some(Arc::new(json)));
            }
            thread::sleep(Duration::from_secs(61));
@@ -109,7 +168,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     rouille::start_server("0.0.0.0:8081", move |request| {
         //annoyingly, there seems to be no way to match "any multi-part path" in the router macro
         if request.method() == "OPTIONS" {
-            rouille::Response::empty_204()
+            Response::empty_204()
                 //make options responses last a day
                 .with_unique_header("Access-Control-Max-Age", "86400")
         } else {
