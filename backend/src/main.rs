@@ -1,3 +1,5 @@
+extern crate csv;
+
 use rouille::Request;
 use rouille::Response;
 use rouille::router;
@@ -20,12 +22,13 @@ use serde_json::json;
 use serde_json::Value;
 use serde::Serialize;
 use std::time::{SystemTime, UNIX_EPOCH, Duration, Instant};
-use csv::ReaderBuilder;
+use csv::{ByteRecord, ReaderBuilder};
 use chrono::{DateTime,TimeDelta,Utc,Timelike};
 
 static ALERTS: ArcSwapOption<String> = ArcSwapOption::const_empty();
 static STOP_NAMES: ArcSwapOption<HashMap<String, String>> = ArcSwapOption::const_empty();
-static STOPS: ArcSwapOption<String> = ArcSwapOption::const_empty();
+static STOPS_LIST: ArcSwapOption<String> = ArcSwapOption::const_empty();
+static STOPS: ArcSwapOption<HashMap<String,String>> = ArcSwapOption::const_empty();
 
 static ASKCREDSSTRING: &str = r#"provide the api credentials as a base-64 encoded token
 in the environment variable APICREDS,
@@ -85,6 +88,7 @@ impl StaticFetcher {
         let requestbytes: Bytes = response.bytes()?;
         let mut zip = zip::ZipArchive::new(Cursor::new(requestbytes))?;
         let mut filemap: HashMap<String, Vec<u8>> = HashMap::new();
+        let fetched_at = SystemTime::now().duration_since(UNIX_EPOCH).expect("time did not work").as_millis() as i64;
 
         for i in 0..zip.len() {
             let mut file = zip.by_index(i)?;
@@ -94,9 +98,12 @@ impl StaticFetcher {
             filemap.insert(name, contents);
         }
         let stopsmap = parse_stop_names(filemap.get("stops.txt")
-            .expect("Waltti failed to return stup data"));
-        STOPS.store(Some(Arc::new(parse_stops(&stopsmap))));
+            .expect("Waltti failed to return stop data"));
+        let full_stop_data = parse_stops_full(filemap.get("stops.txt")
+            .expect("really should be unreachable"), fetched_at);
+        STOPS_LIST.store(Some(Arc::new(parse_stops(&stopsmap,fetched_at))));
         STOP_NAMES.store(Some(Arc::new(stopsmap)));
+        STOPS.store(Some(Arc::new(full_stop_data)));
 
         println!("successfully fetched static data that was last updated at {} on {} ", timestamp, Utc::now());
         Ok(timestamp)
@@ -314,6 +321,47 @@ fn parse_stop_names(stops : &Vec<u8>) -> HashMap<String, String> {
     }
     map
 }
+// zero copy returns a valid utf-8 reference or ""
+fn bytesref_to_str(data: Option<&[u8]>) -> &str {
+    data
+        .and_then(|bytes| std::str::from_utf8(bytes).ok())
+        .unwrap_or("")
+}
+
+fn parse_stops_full(stops : &Vec<u8>, fetched_at: i64) -> HashMap<String, String> {
+    let mut map :HashMap<String, String> = HashMap::new();
+    let mut rdr = ReaderBuilder::new().has_headers(true).from_reader(stops.as_slice());
+
+    // byte records avoids potential errors in utf8 parsing if data contains invalid values
+    for result in rdr.byte_records() {
+        if let Ok(record) = result {
+            // require that all returned records have at least id and name
+            if let(Some(id_bytes), Some(name_bytes)) = (record.get(0), record.get(2)) {
+                let id = String::from_utf8_lossy(id_bytes);
+                let name = String::from_utf8_lossy(name_bytes);
+
+
+                let jsonstops : Value = json!({
+                    "fetchedAt": fetched_at,
+                    "name": name,
+                    // rest of the fields are optional, provided if found
+                    "lat" : bytesref_to_str(record.get(3)),
+                    "lon" : bytesref_to_str(record.get(4)),
+                    "zone_id" : bytesref_to_str(record.get(5)),
+                    "location_type" : bytesref_to_str(record.get(7)),
+                    "municipality_id" : bytesref_to_str(record.get(9)),
+                    "wheelchair_boarding" : bytesref_to_str(record.get(12)),
+                    "platform_code" : bytesref_to_str(record.get(13)),
+                    "vehicle_type" : bytesref_to_str(record.get(14)),
+
+                });
+                let json = serde_json::to_string(&jsonstops).expect("failed to serialize data");
+                map.insert(id.to_string(),json);
+            }
+        }
+    }
+    map
+}
 
 #[derive(Serialize)]
 struct ErrorResponse<'a> {
@@ -360,8 +408,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         } else {
             router!(request,
                 (GET) (/api/stops) => { stops(request) },
-                (GET) (/api/stops/{id: u64}) => { stop(request,id) },
-                (GET) (/api/stops/{id: u64}/departures) => { departures(request,id) },
+                (GET) (/api/stops/{id: String}) => { stop(request,id) },
+                (GET) (/api/stops/{id: String}/departures) => { departures(request,id) },
                 (GET) (/api/alerts) => { alerts(request) },
                 (GET) (/api/vehicles) => { vehicles(request)},
                 _ => jsonerror(404,"pyyntö ei tunnistettu")
@@ -378,14 +426,13 @@ struct BusStop<'a> {
     stop_id: &'a str,
     stop_name: &'a str,
 }
-fn parse_stops(stopsmap : &HashMap<String,String>) -> String {
-    let time = SystemTime::now().duration_since(UNIX_EPOCH).expect("time did not work").as_millis() as i64;
+fn parse_stops(stopsmap : &HashMap<String,String>, fetched_at: i64) -> String {
     let stops: Vec<BusStop> = stopsmap.iter().map(|(key, value)| BusStop {
         stop_id: key,
         stop_name: value
     }).collect();
     let jsonstops : Value = json!({
-        "fetchedAt": time,
+        "fetchedAt": fetched_at,
         "stops": stops
     });
     serde_json::to_string(&jsonstops).expect("failed to serialize data")
@@ -394,7 +441,7 @@ fn parse_stops(stopsmap : &HashMap<String,String>) -> String {
 
 
 fn stops(_request: &Request) -> Response{
-    let stops_guard = STOPS.load();
+    let stops_guard = STOPS_LIST.load();
 
     match &*stops_guard {
         None => jsonerror(500, "static data load failure"),
@@ -402,11 +449,22 @@ fn stops(_request: &Request) -> Response{
     }
 }
 
-fn stop(_request: &Request, id: u64) -> Response{
-    Response::text(format!("stop id {id}"))
+fn stop(_request: &Request, id: String) -> Response{
+    let stops_guard = STOPS.load();
+    match &*stops_guard {
+        None => jsonerror(500, "static data load failure"),
+        Some(stops_map) => {
+            if let Some(json) = (&**stops_map).get(&id) {
+                Response::text(json)
+            } else {
+                jsonerror(404, "stop not found")
+            }
+
+        }
+    }
 }
 
-fn departures(_request: &Request, id: u64) -> Response{
+fn departures(_request: &Request, id: String) -> Response{
     Response::text(format!("departures id {id}"))
 }
 fn alerts(_request: &Request) -> Response{
