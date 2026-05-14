@@ -104,8 +104,12 @@ impl StaticFetcher {
 }
 
 impl FetchTask for StaticFetcher {
+    // changing clocks, etc can make this conversion very unreliable. Instant is monotonic,
+    // while DateTime is complex. However, since this is not saved past one invocation, and there
+    // are always shorter deadlines, it honestly doesn't matter too much if it's off.
     fn next_deadline(&self) -> Instant {
-        Instant::now()
+        let duration = (self.deadline- Utc::now()).to_std().unwrap_or(Duration::ZERO);
+        return Instant::now() + duration;
     }
     //sets deadline to next 22:00
     fn set_next_deadline(&mut self) {
