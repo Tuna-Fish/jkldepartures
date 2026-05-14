@@ -1,50 +1,7 @@
 // src/pages/AlertsPage.tsx
 import FreshnessIndicator from '../components/FreshnessIndicator'
 import type { ServiceAlert } from '../api/types'
-
-// ── Mock data ─────────────────────────────────────────────────────────────────
-// Replace with useAlerts() hook in Step 4
-
-const now = Math.floor(Date.now() / 1000)
-
-const MOCK_ALERTS: ServiceAlert[] = [
-  {
-    id: 'alert-1',
-    headerText: 'Route 4 — Significant delays',
-    descriptionText:
-      'Road works on Kauppakatu between Keskusta and Mattilanniemi. Delays of up to 8 minutes expected.',
-    severity: 'WARNING',
-    effect: 'SIGNIFICANT_DELAYS',
-    activePeriods: [{ start: now - 3600, end: now + 7200 }],
-    affectedRoutes: ['4'],
-    affectedStops: ['1111', '2203'],
-    url: undefined,
-  },
-  {
-    id: 'alert-2',
-    headerText: 'Route 1 — Partial cancellation',
-    descriptionText:
-      'Departures at 14:50 and 15:20 from Keskusta are cancelled due to driver shortage. Next scheduled departure at 15:50.',
-    severity: 'SEVERE',
-    effect: 'NO_SERVICE',
-    activePeriods: [{ start: now - 1800, end: now + 3600 }],
-    affectedRoutes: ['1'],
-    affectedStops: ['1111'],
-    url: undefined,
-  },
-  {
-    id: 'alert-3',
-    headerText: 'All routes — Resolved',
-    descriptionText:
-      'Morning delays on routes 7, 9 due to icy conditions. Resolved at 09:45.',
-    severity: 'INFO',
-    effect: 'MODIFIED_SERVICE',
-    activePeriods: [{ start: now - 14400, end: now - 3600 }],
-    affectedRoutes: ['7', '9'],
-    affectedStops: [],
-    url: undefined,
-  },
-]
+import { useAlerts } from '../hooks/useAlerts'
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
@@ -90,7 +47,7 @@ function routeColour(routeId: string) {
   return ROUTE_COLOURS[routeId] ?? { bg: '#1e2535', text: '#94a3b8' }
 }
 
-function formatPeriod(start?: number, end?: number): string {
+function formatPeriod(end?: number): string {
   const nowSec = Date.now() / 1000
   if (end && end < nowSec) {
     const d = new Date(end * 1000)
@@ -104,6 +61,8 @@ function formatPeriod(start?: number, end?: number): string {
 }
 
 function isResolved(alert: ServiceAlert): boolean {
+  if (alert.activePeriods.length === 0) return false
+
   const nowSec = Date.now() / 1000
   return alert.activePeriods.every(p => p.end !== undefined && p.end < nowSec)
 }
@@ -155,7 +114,7 @@ function AlertCard({ alert }: { alert: ServiceAlert }) {
 
       {/* Footer */}
       <p className="text-[11px] text-slate-600 border-t border-surface-border pt-2.5">
-        {formatPeriod(period?.start, period?.end)}
+        {formatPeriod(period?.end)}
       </p>
     </div>
   )
@@ -164,10 +123,12 @@ function AlertCard({ alert }: { alert: ServiceAlert }) {
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function AlertsPage() {
-  const fetchedAt = Date.now()
+  const { data, isLoading, isError } = useAlerts()
+  const fetchedAt = data?.fetchedAt ?? null
+  const alerts = data?.alerts ?? []
 
-  const active   = MOCK_ALERTS.filter(a => !isResolved(a))
-  const resolved = MOCK_ALERTS.filter(a =>  isResolved(a))
+  const active   = alerts.filter(a => !isResolved(a))
+  const resolved = alerts.filter(a =>  isResolved(a))
 
   return (
     <div className="flex flex-col">
@@ -181,7 +142,27 @@ export default function AlertsPage() {
       </div>
 
       <div className="flex flex-col gap-4 px-4 pt-4 pb-6">
-        {active.length === 0 ? (
+        {isLoading ? (
+          <div className="bg-surface-raised border border-surface-border
+            rounded-xl px-4 py-8 flex flex-col items-center gap-2 text-center">
+            <p className="text-[14px] font-semibold text-slate-300">
+              Loading service alerts
+            </p>
+            <p className="text-[12px] text-slate-500">
+              Checking the latest disruptions
+            </p>
+          </div>
+        ) : isError ? (
+          <div className="bg-surface-raised border border-[#7f1d1d]
+            rounded-xl px-4 py-8 flex flex-col items-center gap-2 text-center">
+            <p className="text-[14px] font-semibold text-[#fca5a5]">
+              Could not load service alerts
+            </p>
+            <p className="text-[12px] text-slate-500">
+              The alerts backend is not reachable right now
+            </p>
+          </div>
+        ) : active.length === 0 ? (
           <div className="bg-surface-raised border border-surface-border
             rounded-xl px-4 py-8 flex flex-col items-center gap-2 text-center">
             <svg width="32" height="32" viewBox="0 0 24 24" fill="none"
