@@ -25,6 +25,7 @@ use chrono::{DateTime,TimeDelta,Utc,Timelike};
 
 static ALERTS: ArcSwapOption<String> = ArcSwapOption::const_empty();
 static STOP_NAMES: ArcSwapOption<HashMap<String, String>> = ArcSwapOption::const_empty();
+static STOPS: ArcSwapOption<String> = ArcSwapOption::const_empty();
 
 static ASKCREDSSTRING: &str = r#"provide the api credentials as a base-64 encoded token
 in the environment variable APICREDS,
@@ -92,7 +93,11 @@ impl StaticFetcher {
             file.read_to_end(&mut contents)?;
             filemap.insert(name, contents);
         }
-        STOP_NAMES.store(Some(Arc::new(parse_stop_names(filemap.get("stops.txt").expect("Waltti failed to return stup data")))));
+        let stopsmap = parse_stop_names(filemap.get("stops.txt")
+            .expect("Waltti failed to return stup data"));
+        STOPS.store(Some(Arc::new(parse_stops(&stopsmap))));
+        STOP_NAMES.store(Some(Arc::new(stopsmap)));
+
         println!("successfully fetched static data that was last updated at {} on {} ", timestamp, Utc::now());
         Ok(timestamp)
     }
@@ -369,31 +374,28 @@ struct BusStop<'a> {
     stop_id: &'a str,
     stop_name: &'a str,
 }
-
-
-fn stops(_request: &Request) -> Response{
-    let stops_guard = STOP_NAMES.load();
-
-    let Some(stopsmap) = stops_guard.as_ref() else { return jsonerror(500,"static data load failure") };
-
+fn parse_stops(stopsmap : &HashMap<String,String>) -> String {
     let time = SystemTime::now().duration_since(UNIX_EPOCH).expect("time did not work").as_millis() as i64;
-
     let stops: Vec<BusStop> = stopsmap.iter().map(|(key, value)| BusStop {
         stop_id: key,
         stop_name: value
     }).collect();
-
-    let response : Value = json!({
+    let jsonstops : Value = json!({
         "fetchedAt": time,
         "stops": stops
     });
+    serde_json::to_string(&jsonstops).expect("failed to serialize data")
+}
 
-    match serde_json::to_string(&response).ok() {
-        Some(stops_text) => Response::text(stops_text),
-        None => jsonerror(500,"static data load failure")
+
+
+fn stops(_request: &Request) -> Response{
+    let stops_guard = STOPS.load();
+
+    match &*stops_guard {
+        None => jsonerror(500, "static data load failure"),
+        Some(stops_text) => Response::text(&**stops_text)
     }
-
-
 }
 
 fn stop(_request: &Request, id: u64) -> Response{
