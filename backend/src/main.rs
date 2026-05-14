@@ -4,7 +4,6 @@ use rouille::router;
 use arc_swap::ArcSwapOption;
 use std::sync::Arc;
 use std::thread;
-use std::time::Duration;
 use envconfig::Envconfig;
 use std::sync::LazyLock;
 use reqwest::blocking::Client;
@@ -15,14 +14,14 @@ use prost::Message;
 use zip::ZipArchive;
 use std::io::Cursor;
 use std::collections::HashMap;
-use std::hash::Hash;
 use std::io::Read;
 use serde_json::json;
 use serde_json::Value;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH, Duration, Instant};
 use csv::ReaderBuilder;
 
 static ALERTS: ArcSwapOption<String> = ArcSwapOption::const_empty();
+static STOP_NAMES: ArcSwapOption<HashMap<String, String>> = ArcSwapOption::const_empty();
 
 static ASKCREDSSTRING: &str = r#"provide the api credentials as a base-64 encoded token
 in the environment variable APICREDS,
@@ -36,6 +35,71 @@ static STATICDATAENDPOINT: &str = "https://tvv.fra1.digitaloceanspaces.com/209.z
 pub struct Config {
     #[envconfig(from = "APICREDS")]
     pub creds: String
+}
+
+pub trait FetchTask: Send {
+    fn next_deadline(&self) -> Instant;
+    fn set_next_deadline(&mut self, next : Instant);
+    fn delay(&self) -> Duration;
+    fn run(&mut self);
+}
+
+pub struct AlertFetcher {
+    endpoint: String,
+    delay: Duration,
+    next_deadline: Instant
+}
+
+impl AlertFetcher {
+    pub fn new(endpoint: &str,delay: Duration) -> Self {
+        Self {
+            endpoint: endpoint.to_string(),
+            delay: delay,
+            next_deadline: Instant::now()
+        }
+    }
+}
+
+impl FetchTask for AlertFetcher {
+    fn next_deadline(&self) -> Instant {
+        self.next_deadline
+    }
+    fn set_next_deadline(& mut self, next: Instant) {
+        self.next_deadline = next;
+    }
+    fn delay (&self) -> Duration {
+        self.delay
+    }
+    fn run(&mut self) {
+        if let Some(json) = fetch_alerts_as_json(&self.endpoint) {
+            ALERTS.store(Some(Arc::new(json)));
+        }
+    }
+}
+
+pub struct Scheduler {
+    tasks: Vec<Box<dyn FetchTask>>,
+}
+
+impl Scheduler {
+    pub fn new(tasks:Vec<Box<dyn FetchTask>>) -> Self {
+        Self { tasks }
+    }
+    pub fn run(&mut self) {
+        loop {
+            let now = Instant::now();
+            let mut next_wakeup = now + Duration::from_secs(365*24*60*60);
+
+            for task in self.tasks.iter_mut() {
+                if now >= task.next_deadline() {
+                    task.run();
+                    task.set_next_deadline(Instant::now()+task.delay());
+                }
+                next_wakeup = next_wakeup.min( task.next_deadline());
+            }
+            std::thread::sleep(next_wakeup.saturating_duration_since(Instant::now()));
+        }
+    }
 }
 
 static CREDSHEADER: LazyLock<&'static str> = LazyLock::new(|| {
@@ -75,8 +139,11 @@ fn fetchwithauth(url: &str) -> Option<Bytes> {
         .get(url)
         .header(AUTHORIZATION,HeaderValue::from_static(*CREDSHEADER))
         .send().ok()?;
+
     if !response.status().is_success() {
-        println!("Fetching alerts returned {}", response.status());
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+
+        println!("{} Fetching {} returned {}", now, url, response.status());
         None
     } else {
         Some(response.bytes().ok()?)
@@ -112,8 +179,12 @@ fn process_jsonalerts(value: &mut Value, stop_names: &HashMap<String,String>){
     }
 }
 
-fn fetch_alerts_as_json(stop_names : &HashMap<String,String>) -> Option<String> {
-    let bytes = fetchwithauth(SERVICEALERTENDPOINT)?;
+fn fetch_alerts_as_json(endpoint: &str) -> Option<String> {
+    let stop_names_guard = STOP_NAMES.load();
+
+    let Some(stop_names) = stop_names_guard.as_ref() else { return None };
+
+    let bytes = fetchwithauth(endpoint)?;
     let time = SystemTime::now().duration_since(UNIX_EPOCH).expect("time did not work").as_millis() as i64;
     let feed = FeedMessage::decode(bytes).ok()?;
     let alerts: Vec<_> = feed.entity.into_iter()
@@ -154,15 +225,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for (key, value) in &staticdata {
         println!("{}: {}", key, value.len());
     }
-    let stop_names = parse_stop_names(staticdata.get("stops.txt").expect("Waltti failed to return stup data"));
+    STOP_NAMES.store(Some(Arc::new(parse_stop_names(staticdata.get("stops.txt").expect("Waltti failed to return stup data")))));
+    let tasks : Vec<Box<dyn FetchTask>> = vec![
+        Box::new(AlertFetcher::new(SERVICEALERTENDPOINT, Duration::from_secs(61))) as Box<dyn FetchTask>,
+
+    ];
+
 
     thread::spawn(move || {
-       loop {
-           if let Some(json) = fetch_alerts_as_json(&stop_names) {
-               ALERTS.store(Some(Arc::new(json)));
-           }
-           thread::sleep(Duration::from_secs(61));
-       }
+        let mut sched = Scheduler::new(tasks);
+        sched.run();
     });
 
     rouille::start_server("0.0.0.0:8081", move |request| {
