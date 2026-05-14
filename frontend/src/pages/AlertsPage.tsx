@@ -3,7 +3,7 @@ import FreshnessIndicator from '../components/FreshnessIndicator'
 import type { ServiceAlert } from '../api/types'
 import { useAlerts } from '../hooks/useAlerts'
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// ── Sub-components ────────────────────────────────────────────────────────────
 
 type SeverityLevel = ServiceAlert['severity']
 
@@ -47,13 +47,6 @@ function routeColour(routeId: string) {
   return ROUTE_COLOURS[routeId] ?? { bg: '#1e2535', text: '#94a3b8' }
 }
 
-function isResolved(alert: ServiceAlert): boolean {
-  const nowSec = Date.now() / 1000
-  return alert.activePeriods.every(
-    (p) => p.end !== undefined && p.end < nowSec
-  )
-}
-
 function formatPeriod(start?: number, end?: number): string {
   const nowSec = Date.now() / 1000
   if (end && end < nowSec) {
@@ -71,7 +64,12 @@ function formatPeriod(start?: number, end?: number): string {
   return 'Active — no end time given'
 }
 
-// ── Sub-components ────────────────────────────────────────────────────────────
+function isResolved(alert: ServiceAlert): boolean {
+  if (alert.activePeriods.length === 0) return false
+
+  const nowSec = Date.now() / 1000
+  return alert.activePeriods.every(p => p.end !== undefined && p.end < nowSec)
+}
 
 function AlertCard({ alert }: { alert: ServiceAlert }) {
   const s = SEVERITY_STYLES[alert.severity] ?? SEVERITY_STYLES.UNKNOWN
@@ -118,7 +116,7 @@ function AlertCard({ alert }: { alert: ServiceAlert }) {
       </p>
 
       <p className="text-[11px] text-slate-600 border-t border-surface-border pt-2.5">
-        {formatPeriod(period?.start, period?.end)}
+        {formatPeriod(period?.end)}
       </p>
     </div>
   )
@@ -127,7 +125,11 @@ function AlertCard({ alert }: { alert: ServiceAlert }) {
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function AlertsPage() {
-  const { active, recentlyResolved, fetchedAt } = useAlerts()
+  const { data: alerts, isLoading, isError, dataUpdatedAt: fetchedAt } = useAlerts()
+  const safeAlerts = alerts?.alerts ?? []
+
+  const active   = safeAlerts.filter((a: ServiceAlert) => !isResolved(a))
+  const resolved = safeAlerts.filter((a: ServiceAlert) =>  isResolved(a))
 
   return (
     <div className="flex flex-col">
@@ -141,7 +143,27 @@ export default function AlertsPage() {
       </div>
 
       <div className="flex flex-col gap-4 px-4 pt-4 pb-6">
-        {active.length === 0 ? (
+        {isLoading ? (
+          <div className="bg-surface-raised border border-surface-border
+            rounded-xl px-4 py-8 flex flex-col items-center gap-2 text-center">
+            <p className="text-[14px] font-semibold text-slate-300">
+              Loading service alerts
+            </p>
+            <p className="text-[12px] text-slate-500">
+              Checking the latest disruptions
+            </p>
+          </div>
+        ) : isError ? (
+          <div className="bg-surface-raised border border-[#7f1d1d]
+            rounded-xl px-4 py-8 flex flex-col items-center gap-2 text-center">
+            <p className="text-[14px] font-semibold text-[#fca5a5]">
+              Could not load service alerts
+            </p>
+            <p className="text-[12px] text-slate-500">
+              The alerts backend is not reachable right now
+            </p>
+          </div>
+        ) : active.length === 0 ? (
           <div className="bg-surface-raised border border-surface-border
             rounded-xl px-4 py-8 flex flex-col items-center gap-2 text-center">
             <svg width="32" height="32" viewBox="0 0 24 24" fill="none"
@@ -162,18 +184,18 @@ export default function AlertsPage() {
             <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-widest">
               Active now
             </p>
-            {active.map((a) => (
+            {active.map((a: ServiceAlert) => (
               <AlertCard key={a.id} alert={a} />
             ))}
           </>
         )}
 
-        {recentlyResolved.length > 0 && (
+        {resolved.length > 0 && (
           <>
             <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-widest mt-2">
               Earlier today
             </p>
-            {recentlyResolved.map((a) => (
+            {resolved.map((a: ServiceAlert) => (
               <AlertCard key={a.id} alert={a} />
             ))}
           </>

@@ -1,134 +1,129 @@
-// src/services/alerts.ts
-// ─────────────────────────────────────────────────────────────────────────────
-// Pure functions for filtering and classifying service alerts.
-// ─────────────────────────────────────────────────────────────────────────────
+import type {
+  AlertEffect,
+  AlertSeverity,
+  RawAlertResult,
+  ServiceAlert,
+} from '../api/types'
 
-import type { ServiceAlert } from '../api/types'
+const ALERTS_URL = 'http://tunamasiina.freeddns.org:8081/api/alerts'
 
-// ── Time helpers ──────────────────────────────────────────────────────────────
+interface Translation {
+  language?: string
+  text?: string
+}
 
-/**
- * Returns true if the alert is currently active.
- * An alert is active if at least one of its active periods
- * overlaps with the current time.
- */
-export function isAlertActive(
-  alert: ServiceAlert,
-  nowSeconds: number = Math.floor(Date.now() / 1000)
-): boolean {
-  if (alert.activePeriods.length === 0) return true  // no period = always active
+interface TranslatedText {
+  translation?: Translation[]
+}
 
-  return alert.activePeriods.some(period => {
-    const startOk = period.start === undefined || period.start <= nowSeconds
-    const endOk   = period.end   === undefined || period.end   >= nowSeconds
-    return startOk && endOk
+interface BackendAlert {
+  id?: string
+  active_period?: Array<{ start?: number; end?: number }>
+  activePeriods?: ServiceAlert['activePeriods']
+  description_text?: TranslatedText
+  descriptionText?: string
+  effect?: number | AlertEffect
+  header_text?: TranslatedText
+  headerText?: string
+  informed_entity?: Array<{
+    route_id?: string
+    stop_id?: string
+  }>
+  severity_level?: number
+  severity?: AlertSeverity
+  url?: TranslatedText | string
+  affectedRoutes?: string[]
+  affectedStops?: string[]
+}
+
+type AlertsResponse = BackendAlert[] | {
+  alerts?: BackendAlert[]
+  data?: BackendAlert[]
+  fetchedAt?: number
+}
+
+function pickTranslation(translated?: TranslatedText): string {
+  if (!translated?.translation?.length) return ''
+  const fi = translated.translation.find(t => t.language === 'fi')
+  return (fi ?? translated.translation[0])?.text ?? ''
+}
+
+function mapAlertSeverity(value: number | AlertSeverity | undefined): AlertSeverity {
+  if (typeof value === 'string') return value
+
+  switch (value) {
+    case 2:  return 'INFO'
+    case 3:  return 'WARNING'
+    case 4:  return 'SEVERE'
+    default: return 'UNKNOWN'
+  }
+}
+
+function mapAlertEffect(value: number | AlertEffect | undefined): AlertEffect {
+  if (typeof value === 'string') return value
+
+  const effects: Record<number, AlertEffect> = {
+    1: 'NO_SERVICE',
+    2: 'REDUCED_SERVICE',
+    3: 'SIGNIFICANT_DELAYS',
+    4: 'DETOUR',
+    5: 'ADDITIONAL_SERVICE',
+    6: 'MODIFIED_SERVICE',
+    7: 'OTHER_EFFECT',
+    8: 'UNKNOWN_EFFECT',
+    9: 'STOP_MOVED',
+  }
+
+  return effects[value ?? -1] ?? 'UNKNOWN_EFFECT'
+}
+
+function getUrl(url?: TranslatedText | string): string | undefined {
+  const value = typeof url === 'string' ? url : pickTranslation(url)
+  return value || undefined
+}
+
+function toServiceAlert(alert: BackendAlert, index: number): ServiceAlert {
+  const informedEntities = alert.informed_entity ?? []
+
+  return {
+    id: alert.id ?? `alert-${index}`,
+    headerText: alert.headerText ?? pickTranslation(alert.header_text),
+    descriptionText: alert.descriptionText ?? pickTranslation(alert.description_text),
+    severity: alert.severity ?? mapAlertSeverity(alert.severity_level),
+    effect: mapAlertEffect(alert.effect),
+    activePeriods: alert.activePeriods ?? alert.active_period ?? [],
+    affectedRoutes: alert.affectedRoutes ?? informedEntities
+      .map(entity => entity.route_id)
+      .filter(routeId => routeId !== undefined),
+    affectedStops: alert.affectedStops ?? informedEntities
+      .map(entity => entity.stop_id)
+      .filter(stopId => stopId !== undefined),
+    url: getUrl(alert.url),
+  }
+}
+
+function getAlertsFromResponse(data: AlertsResponse): BackendAlert[] {
+  if (Array.isArray(data)) return data
+  if (Array.isArray(data.alerts)) return data.alerts
+  if (Array.isArray(data.data)) return data.data
+  return []
+}
+
+export async function fetchAlerts(): Promise<RawAlertResult> {
+  const response = await fetch(ALERTS_URL, {
+    headers: {
+      Accept: 'application/json',
+    },
   })
-}
 
-/**
- * Returns true if the alert has fully expired.
- */
-export function isAlertResolved(
-  alert: ServiceAlert,
-  nowSeconds: number = Math.floor(Date.now() / 1000)
-): boolean {
-  if (alert.activePeriods.length === 0) return false
-  return alert.activePeriods.every(
-    p => p.end !== undefined && p.end < nowSeconds
-  )
-}
+  if (!response.ok) {
+    throw new Error(`Alerts fetch failed: ${response.status} ${response.statusText}`)
+  }
 
-// ── Filtering ─────────────────────────────────────────────────────────────────
+  const data = await response.json() as AlertsResponse
 
-/**
- * Returns only alerts that are currently active.
- */
-export function getActiveAlerts(alerts: ServiceAlert[]): ServiceAlert[] {
-  return alerts.filter(a => isAlertActive(a))
-}
-
-/**
- * Returns alerts that have ended within the last 4 hours.
- * Used for the "Earlier today" section.
- */
-export function getRecentlyResolvedAlerts(
-  alerts: ServiceAlert[],
-  windowSeconds: number = 4 * 60 * 60
-): ServiceAlert[] {
-  const nowSeconds = Math.floor(Date.now() / 1000)
-  return alerts.filter(alert => {
-    if (!isAlertResolved(alert)) return false
-    const latestEnd = Math.max(
-      ...alert.activePeriods
-        .map(p => p.end ?? 0)
-    )
-    return latestEnd >= nowSeconds - windowSeconds
-  })
-}
-
-/**
- * Returns alerts relevant to a specific stop —
- * either directly affecting the stop, or affecting a route that serves it.
- */
-export function getAlertsForStop(
-  alerts: ServiceAlert[],
-  stopId: string,
-  routeIds: string[] = []
-): ServiceAlert[] {
-  return alerts.filter(alert => {
-    const affectsStop  = alert.affectedStops.includes(stopId)
-    const affectsRoute = routeIds.some(r => alert.affectedRoutes.includes(r))
-    return affectsStop || affectsRoute
-  })
-}
-
-/**
- * Returns alerts for a specific route.
- */
-export function getAlertsForRoute(
-  alerts: ServiceAlert[],
-  routeId: string
-): ServiceAlert[] {
-  return alerts.filter(a => a.affectedRoutes.includes(routeId))
-}
-
-// ── Severity sorting ──────────────────────────────────────────────────────────
-
-const SEVERITY_ORDER: Record<ServiceAlert['severity'], number> = {
-  SEVERE:  0,
-  WARNING: 1,
-  INFO:    2,
-  UNKNOWN: 3,
-}
-
-/**
- * Sorts alerts by severity (SEVERE first) then by start time (newest first).
- */
-export function sortAlerts(alerts: ServiceAlert[]): ServiceAlert[] {
-  return [...alerts].sort((a, b) => {
-    const severityDiff =
-      (SEVERITY_ORDER[a.severity] ?? 3) - (SEVERITY_ORDER[b.severity] ?? 3)
-    if (severityDiff !== 0) return severityDiff
-
-    // Same severity — sort by most recent start time
-    const aStart = a.activePeriods[0]?.start ?? 0
-    const bStart = b.activePeriods[0]?.start ?? 0
-    return bStart - aStart
-  })
-}
-
-/**
- * Returns the highest severity level present in a list of alerts.
- * Useful for showing a summary badge on the nav tab.
- */
-export function highestSeverity(
-  alerts: ServiceAlert[]
-): ServiceAlert['severity'] {
-  if (alerts.length === 0) return 'UNKNOWN'
-  return alerts.reduce((highest, alert) => {
-    return (SEVERITY_ORDER[alert.severity] ?? 3) 
-           < (SEVERITY_ORDER[highest] ?? 3)
-      ? alert.severity
-      : highest
-  }, 'UNKNOWN' as ServiceAlert['severity'])
+  return {
+    alerts: getAlertsFromResponse(data).map(toServiceAlert),
+    fetchedAt: Array.isArray(data) ? Date.now() : data.fetchedAt ?? Date.now(),
+  }
 }
