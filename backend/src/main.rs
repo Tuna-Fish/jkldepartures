@@ -258,7 +258,27 @@ fn parse_stop_names(stops : &Vec<u8>) -> HashMap<String, String> {
     map
 }
 
+#[derive(Serialize)]
+struct ErrorResponse<'a> {
+    code: u16,
+    message: &'a str,
+    timestamp: u64,
+}
 
+fn jsonerror(code: u16, message: &str) -> Response {
+    let current_timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    let payload = ErrorResponse {
+        code,
+        message,
+        timestamp: current_timestamp,
+    };
+
+    Response::json(&payload).with_status_code(code)
+}
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     //for debugging
@@ -291,7 +311,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 (GET) (/api/stops/{id: u64}/departures) => { departures(request,id) },
                 (GET) (/api/alerts) => { alerts(request) },
                 (GET) (/api/vehicles) => { vehicles(request)},
-                _ => Response::empty_404()
+                _ => jsonerror(404,"pyyntö ei tunnistettu")
             )
         }
             //disabling CORS, we don't care, we have no writes
@@ -306,10 +326,11 @@ struct BusStop<'a> {
     stop_name: &'a str,
 }
 
+
 fn stops(_request: &Request) -> Response{
     let stops_guard = STOP_NAMES.load();
 
-    let Some(stopsmap) = stops_guard.as_ref() else { return Response::empty_404() };
+    let Some(stopsmap) = stops_guard.as_ref() else { return jsonerror(500,"static data load failure") };
 
     let time = SystemTime::now().duration_since(UNIX_EPOCH).expect("time did not work").as_millis() as i64;
 
@@ -318,14 +339,14 @@ fn stops(_request: &Request) -> Response{
         stop_name: value
     }).collect();
 
-    let mut response : Value = json!({
+    let response : Value = json!({
         "fetchedAt": time,
         "stops": stops
     });
 
     match serde_json::to_string(&response).ok() {
         Some(stops_text) => Response::text(stops_text),
-        None => Response::empty_404()
+        None => jsonerror(500,"static data load failure")
     }
 
 
@@ -343,7 +364,7 @@ fn alerts(_request: &Request) -> Response{
 
     match &*alertsguard {
         Some(alertsjsonstring) => Response::text(&**alertsjsonstring),
-        None => Response::empty_404()
+        None => jsonerror(500,"static data load failure")
     }
 
 }
