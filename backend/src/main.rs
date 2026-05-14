@@ -11,7 +11,8 @@ use reqwest::header::{HeaderValue, AUTHORIZATION};
 use bytes::Bytes;
 use gtfs_realtime::FeedMessage;
 use prost::Message;
-use zip::ZipArchive;
+use zip;
+use std::error::Error;
 use std::io::Cursor;
 use std::collections::HashMap;
 use std::io::Read;
@@ -20,7 +21,7 @@ use serde_json::Value;
 use serde::Serialize;
 use std::time::{SystemTime, UNIX_EPOCH, Duration, Instant};
 use csv::ReaderBuilder;
-use chrono::{Local, NaiveDate};
+use chrono::{DateTime,TimeDelta,Utc,Timelike};
 
 static ALERTS: ArcSwapOption<String> = ArcSwapOption::const_empty();
 static STOP_NAMES: ArcSwapOption<HashMap<String, String>> = ArcSwapOption::const_empty();
@@ -48,18 +49,52 @@ pub trait FetchTask: Send {
 
 pub struct StaticFetcher {
     endpoint: String,
-    delay: Duration,
-    last_day_fetched: NaiveDate
-
+    deadline: DateTime<Utc>,
+    last_fetch: DateTime<Utc>
 }
 
 impl StaticFetcher {
-    pub fn new(endpoint: &str, delay: Duration) -> Self {
+    pub fn new(endpoint: &str) -> Self {
         Self {
             endpoint: endpoint.to_string(),
-            delay,
-            last_day_fetched: NaiveDate::from_ymd_opt(-44,3,15).unwrap()
+            deadline: DateTime::<Utc>::MIN_UTC,
+            last_fetch: DateTime::<Utc>::MIN_UTC
         }
+    }
+    fn update_static_data(&mut self) -> Result<DateTime<Utc>,Box<dyn Error>> {
+        let response = Client::new()
+            .get(&self.endpoint)
+            .send()?;
+
+        if !response.status().is_success() {
+            println!("{}",response.status());
+            return Err(Box::from("failure to fetch static data"));
+        }
+
+        let Some(timestamp) = response
+            .headers()
+            .get(reqwest::header::LAST_MODIFIED)
+            .and_then(|hdr| hdr.to_str().ok())
+            .and_then(|str_val| DateTime::parse_from_rfc2822(str_val).ok())
+            .map(|dt| dt.into())
+            else {
+                return Err(Box::from("Failed to extract or parse Last-Modified header"));
+            };
+
+        let requestbytes: Bytes = response.bytes()?;
+        let mut zip = zip::ZipArchive::new(Cursor::new(requestbytes))?;
+        let mut filemap: HashMap<String, Vec<u8>> = HashMap::new();
+
+        for i in 0..zip.len() {
+            let mut file = zip.by_index(i)?;
+            let name = file.name().to_string();
+            let mut contents = Vec::with_capacity(file.size().try_into().unwrap());
+            file.read_to_end(&mut contents)?;
+            filemap.insert(name, contents);
+        }
+        STOP_NAMES.store(Some(Arc::new(parse_stop_names(filemap.get("stops.txt").expect("Waltti failed to return stup data")))));
+        println!("successfully fetched static data that was last updated at {} on {} ", timestamp, Utc::now());
+        Ok(timestamp)
     }
 }
 
@@ -67,19 +102,57 @@ impl FetchTask for StaticFetcher {
     fn next_deadline(&self) -> Instant {
         Instant::now()
     }
+    //sets deadline to next 22:00
     fn set_next_deadline(&mut self) {
-
+        let now = Utc::now();
+        let mut target_deadline = now
+            .with_hour(22).unwrap()
+            .with_minute(0).unwrap()
+            .with_second(0).unwrap()
+            .with_nanosecond(0).unwrap();
+        if now < target_deadline {
+            target_deadline += TimeDelta::days(1);
+        }
+        self.deadline = target_deadline;
     }
     fn deadline_has_passed(&self) -> bool {
-        false
+        let now = Utc::now();
+        now > self.deadline
     }
     // When staticfetcher runs, it "seizes" control of the fetch thread for a while, because other
     // data sources depend on the static data, and static date update time varies by a few seconds.
     // We need to make sure that no new dynamic data is used with old static data. We do this by not
     // allowing other fetches after the static data could have update, until it has. This will cause
-    // a blip in updates at midnight
+    // a blip in updates at midnight, usually for 5-15 seconds
     fn run(& mut self) {
+        let client = Client::new();
+        loop {
+            let response = client.head(&self.endpoint).send().ok().filter(|r| r.status().is_success());
+            let current_modification : Option<DateTime<Utc>> = response
+                .and_then(|res| res.headers().get(reqwest::header::LAST_MODIFIED).cloned())
+                .and_then(|hdr| hdr.to_str().ok().map(String::from))
+                .and_then(|str_val| DateTime::parse_from_rfc2822(&str_val).ok())
+                .map(|dt| dt.into());
+            //got valid timestamp from server
+            if let Some(timestamp) = current_modification {
+                //data updated since last attempt
+                if timestamp > self.last_fetch {
+                    match self.update_static_data() {
+                        Ok(time) => {
+                            self.last_fetch = time;
+                            break;
+                        }
+                        Err(e) => {
+                            println!("{}", e);
+                        }
+                    }
+                }
+            } else {
+                println!("Network error, unexpected status, or missing/invalid update metadata.");
+            }
+            std::thread::sleep(Duration::from_secs(5));
 
+        }
     }
 }
 
@@ -147,31 +220,6 @@ static CREDSHEADER: LazyLock<&'static str> = LazyLock::new(|| {
 
     Box::leak(token.into_boxed_str())
 });
-
-
-fn fetchstaticdata() -> Result<HashMap<String,Vec<u8>>, Box<dyn std::error::Error>> {
-    let response = Client::new()
-        .get(STATICDATAENDPOINT)
-        .send()?;
-
-    if !response.status().is_success() {
-        println!("{}",response.status());
-    }
-
-    let requestbytes: Bytes = response.bytes()?;
-    let mut zip = ZipArchive::new(Cursor::new(requestbytes))?;
-    let mut filemap: HashMap<String, Vec<u8>> = HashMap::new();
-
-    for i in 0..zip.len() {
-        let mut file = zip.by_index(i)?;
-        let name = file.name().to_string();
-        let mut contents = Vec::with_capacity(file.size().try_into().unwrap());
-        file.read_to_end(&mut contents)?;
-        filemap.insert(name, contents);
-    }
-
-    Ok(filemap)
-}
 
 fn fetchwithauth(url: &str) -> Option<Bytes> {
     let response = Client::new()
@@ -282,12 +330,8 @@ fn jsonerror(code: u16, message: &str) -> Response {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     //for debugging
-    let staticdata = fetchstaticdata()?;
-    for (key, value) in &staticdata {
-        println!("{}: {}", key, value.len());
-    }
-    STOP_NAMES.store(Some(Arc::new(parse_stop_names(staticdata.get("stops.txt").expect("Waltti failed to return stup data")))));
     let tasks : Vec<Box<dyn FetchTask>> = vec![
+        Box::new(StaticFetcher::new(STATICDATAENDPOINT )) as Box<dyn FetchTask>,
         Box::new(AlertFetcher::new(SERVICEALERTENDPOINT, Duration::from_secs(61))) as Box<dyn FetchTask>,
 
     ];
