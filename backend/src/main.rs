@@ -126,7 +126,7 @@ impl FetchTask for StaticFetcher {
             .with_minute(0).unwrap()
             .with_second(0).unwrap()
             .with_nanosecond(0).unwrap();
-        if now < target_deadline {
+        if now > target_deadline {
             target_deadline += TimeDelta::days(1);
         }
         self.deadline = target_deadline;
