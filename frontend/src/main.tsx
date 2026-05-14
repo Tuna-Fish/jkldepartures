@@ -8,6 +8,7 @@ import HomePage from './pages/HomePage'
 import StopPage from './pages/StopPage'
 import AlertsPage from './pages/AlertsPage'
 import MapPage from './pages/MapPage'
+import StopSearchPage from './pages/StopSearchPage'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -28,6 +29,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         <AppLayout>
           <Routes>
             <Route path="/"                element={<HomePage />} />
+            <Route path="/stop/search"     element={<StopSearchPage />} />
             <Route path="/stop/:stopId"    element={<StopPage />} />
             <Route path="/alerts"          element={<AlertsPage />} />
             <Route path="/map"             element={<MapPage />} />

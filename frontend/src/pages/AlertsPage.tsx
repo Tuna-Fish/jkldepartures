@@ -1,7 +1,7 @@
 // src/pages/AlertsPage.tsx
-import { useMemo, useRef } from 'react'
 import FreshnessIndicator from '../components/FreshnessIndicator'
 import type { ServiceAlert } from '../api/types'
+import { useAlerts } from '../hooks/useAlerts'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -64,6 +64,10 @@ function formatPeriod(start?: number, end?: number): string {
     const d = new Date(end * 1000)
     return `Active until ${d.toLocaleTimeString('fi-FI', { hour: '2-digit', minute: '2-digit' })} today`
   }
+  if (start) {
+    const d = new Date(start * 1000)
+    return `Active since ${d.toLocaleTimeString('fi-FI', { hour: '2-digit', minute: '2-digit' })}`
+  }
   return 'Active — no end time given'
 }
 
@@ -83,7 +87,6 @@ function AlertCard({ alert }: { alert: ServiceAlert }) {
         ${resolved ? 'opacity-60' : ''}
       `}
     >
-      {/* Header row */}
       <div className="flex items-center gap-2 flex-wrap">
         {alert.affectedRoutes.map((r) => {
           const c = routeColour(r)
@@ -110,12 +113,10 @@ function AlertCard({ alert }: { alert: ServiceAlert }) {
         </span>
       </div>
 
-      {/* Description */}
       <p className="text-[13px] text-slate-400 leading-relaxed">
         {alert.descriptionText}
       </p>
 
-      {/* Footer */}
       <p className="text-[11px] text-slate-600 border-t border-surface-border pt-2.5">
         {formatPeriod(period?.start, period?.end)}
       </p>
@@ -126,61 +127,13 @@ function AlertCard({ alert }: { alert: ServiceAlert }) {
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function AlertsPage() {
-  const fetchedAtRef = useRef<number>(Date.now())
-  const fetchedAt = fetchedAtRef.current
-
-  const alerts = useMemo((): ServiceAlert[] => {
-    const now = Math.floor(Date.now() / 1000)
-    return [
-      {
-        id: 'alert-1',
-        headerText: 'Route 4 — Significant delays',
-        descriptionText:
-          'Road works on Kauppakatu between Keskusta and Mattilanniemi. Delays of up to 8 minutes expected.',
-        severity: 'WARNING',
-        effect: 'SIGNIFICANT_DELAYS',
-        activePeriods: [{ start: now - 3600, end: now + 7200 }],
-        affectedRoutes: ['4'],
-        affectedStops: ['1111', '2203'],
-        url: undefined,
-      },
-      {
-        id: 'alert-2',
-        headerText: 'Route 1 — Partial cancellation',
-        descriptionText:
-          'Departures at 14:50 and 15:20 from Keskusta are cancelled due to driver shortage. Next scheduled departure at 15:50.',
-        severity: 'SEVERE',
-        effect: 'NO_SERVICE',
-        activePeriods: [{ start: now - 1800, end: now + 3600 }],
-        affectedRoutes: ['1'],
-        affectedStops: ['1111'],
-        url: undefined,
-      },
-      {
-        id: 'alert-3',
-        headerText: 'All routes — Resolved',
-        descriptionText:
-          'Morning delays on routes 7, 9 due to icy conditions. Resolved at 09:45.',
-        severity: 'INFO',
-        effect: 'MODIFIED_SERVICE',
-        activePeriods: [{ start: now - 14400, end: now - 3600 }],
-        affectedRoutes: ['7', '9'],
-        affectedStops: [],
-        url: undefined,
-      },
-    ]
-  }, [])
-
-  const active   = alerts.filter((a) => !isResolved(a))
-  const resolved = alerts.filter((a) =>  isResolved(a))
+  const { active, recentlyResolved, fetchedAt } = useAlerts()
 
   return (
     <div className="flex flex-col">
       {/* Top bar */}
-      <div
-        className="bg-surface-raised border-b border-surface-border
-          px-4 py-3.5 flex items-center gap-3 sticky top-0 z-10"
-      >
+      <div className="bg-surface-raised border-b border-surface-border
+        px-4 py-3.5 flex items-center gap-3 sticky top-0 z-10">
         <p className="flex-1 text-[15px] font-semibold text-slate-100">
           Service alerts
         </p>
@@ -189,15 +142,11 @@ export default function AlertsPage() {
 
       <div className="flex flex-col gap-4 px-4 pt-4 pb-6">
         {active.length === 0 ? (
-          <div
-            className="bg-surface-raised border border-surface-border
-              rounded-xl px-4 py-8 flex flex-col items-center gap-2 text-center"
-          >
-            <svg
-              width="32" height="32" viewBox="0 0 24 24" fill="none"
+          <div className="bg-surface-raised border border-surface-border
+            rounded-xl px-4 py-8 flex flex-col items-center gap-2 text-center">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none"
               stroke="#4ade80" strokeWidth={1.5}
-              strokeLinecap="round" strokeLinejoin="round"
-            >
+              strokeLinecap="round" strokeLinejoin="round">
               <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
               <polyline points="22 4 12 14.01 9 11.01" />
             </svg>
@@ -219,12 +168,12 @@ export default function AlertsPage() {
           </>
         )}
 
-        {resolved.length > 0 && (
+        {recentlyResolved.length > 0 && (
           <>
             <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-widest mt-2">
               Earlier today
             </p>
-            {resolved.map((a) => (
+            {recentlyResolved.map((a) => (
               <AlertCard key={a.id} alert={a} />
             ))}
           </>

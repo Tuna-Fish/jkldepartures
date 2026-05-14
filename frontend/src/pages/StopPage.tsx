@@ -1,85 +1,10 @@
 // src/pages/StopPage.tsx
 import { useParams, useNavigate } from 'react-router-dom'
-import { useMemo, useRef, useEffect } from 'react'
 import DepartureBoard from '../components/DepartureBoard'
 import AlertBanner from '../components/AlertBanner'
 import FreshnessIndicator from '../components/FreshnessIndicator'
-import type { Departure } from '../api/types'
-
-// ── Temporary mock data ───────────────────────────────────────────────────────
-// Replace useMockDepartures() with useDepartures(stopId) in Step 4
-// once the hooks layer is wired up.
-
-function useMockDepartures(stopId: string): {
-  departures: Departure[]
-  isLoading: boolean
-  isError: boolean
-  fetchedAt: number | null
-} {
-  const fetchedAt = useRef<number>(Date.now())
-  const nowRef = useRef<number>(Math.floor(Date.now() / 1000))
-
-  // Reset refs when stopId changes
-  useEffect(() => {
-    fetchedAt.current = Date.now()
-    nowRef.current = Math.floor(Date.now() / 1000)
-  }, [stopId])
-
-  const now = nowRef.current
-
-  const departures: Departure[] = useMemo(() => [
-    {
-      tripId: 'trip-1', routeId: '4',
-      headsign: 'Mattilanniemi',
-      scheduledDeparture: now + 4 * 60,
-      realtimeDeparture:  now + 8 * 60,
-      delaySeconds: 240, status: 'DELAYED',
-      hasRealtime: true, platform: 'A',
-    },
-    {
-      tripId: 'trip-2', routeId: '12',
-      headsign: 'Keljonkangas',
-      scheduledDeparture: now + 7 * 60,
-      realtimeDeparture:  now + 7 * 60,
-      delaySeconds: 0, status: 'ON_TIME',
-      hasRealtime: true, platform: 'B',
-    },
-    {
-      tripId: 'trip-3', routeId: '25',
-      headsign: 'Seppälä',
-      scheduledDeparture: now + 11 * 60,
-      realtimeDeparture:  now + 11 * 60,
-      delaySeconds: 0, status: 'ON_TIME',
-      hasRealtime: true, platform: 'A',
-    },
-    {
-      tripId: 'trip-4', routeId: '7',
-      headsign: 'Kuokkala',
-      scheduledDeparture: now + 14 * 60,
-      realtimeDeparture:  now + 14 * 60,
-      delaySeconds: 0, status: 'ON_TIME',
-      hasRealtime: false, platform: 'C',
-    },
-    {
-      tripId: 'trip-5', routeId: '1',
-      headsign: 'Palokka',
-      scheduledDeparture: now + 22 * 60,
-      realtimeDeparture:  now + 22 * 60,
-      delaySeconds: 0, status: 'CANCELLED',
-      hasRealtime: true, platform: 'B',
-    },
-    {
-      tripId: 'trip-6', routeId: '9',
-      headsign: 'Tikkakoski',
-      scheduledDeparture: now + 21 * 60,
-      realtimeDeparture:  now + 21 * 60,
-      delaySeconds: 0, status: 'NO_DATA',
-      hasRealtime: false, platform: 'D',
-    },
-  ], [now])
-
-  return { departures, isLoading: false, isError: false, fetchedAt: fetchedAt.current }
-}
+import { useDepartures } from '../hooks/useDepartures'
+import { useAlerts } from '../hooks/useAlerts'
 
 // ── Stop metadata ─────────────────────────────────────────────────────────────
 // Replace with real static GTFS lookup when backend is ready
@@ -88,9 +13,13 @@ const STOP_META: Record<string, { name: string; subtitle: string }> = {
   '1111': { name: 'Keskusta (M)',  subtitle: 'Kauppakatu, platform A' },
   '2203': { name: 'Mattilanniemi', subtitle: 'Mattilanniemenkatu' },
   '3041': { name: 'Yliopisto',     subtitle: 'Seminaarinkatu' },
-  '1084': { name: 'Hämeenkatu',   subtitle: 'Hämeenkatu' },
-  '4012': { name: 'Keljonkangas', subtitle: 'Keljonkaari' },
+  '1084': { name: 'Hämeenkatu',    subtitle: 'Hämeenkatu' },
+  '4012': { name: 'Keljonkangas',  subtitle: 'Keljonkaari' },
   '2110': { name: 'Tourula',       subtitle: 'Tourulankatu' },
+  '5001': { name: 'Matkakeskus',   subtitle: 'Asemakatu' },
+  '5102': { name: 'Kuokkala',      subtitle: 'Kuokkalantie' },
+  '6201': { name: 'Seppälä',       subtitle: 'Seppälänkatu' },
+  '6340': { name: 'Tikkakoski',    subtitle: 'Tikkakoskentie' },
 }
 
 // ── Page ──────────────────────────────────────────────────────────────────────
@@ -99,8 +28,11 @@ export default function StopPage() {
   const { stopId = '' } = useParams()
   const navigate = useNavigate()
 
-  const { departures, isLoading, isError, fetchedAt } =
-    useMockDepartures(stopId)
+  const { departures, isLoading, isError, fetchedAt, isStale } =
+    useDepartures(stopId)
+
+  const { alertsForStop } = useAlerts()
+  const stopAlerts = alertsForStop(stopId)
 
   const meta = STOP_META[stopId] ?? {
     name: `Stop ${stopId}`,
@@ -128,7 +60,7 @@ export default function StopPage() {
         <p className="flex-1 text-[15px] font-semibold text-slate-100 truncate">
           {meta.name}
         </p>
-        <FreshnessIndicator fetchedAt={fetchedAt} />
+        <FreshnessIndicator fetchedAt={fetchedAt} staleAfterMs={isStale ? 0 : 45_000} />
       </div>
 
       {/* Content */}
@@ -148,14 +80,15 @@ export default function StopPage() {
           </div>
         </div>
 
-        {/* Contextual alert — shown only for stop 1111 as demo */}
-        {stopId === '1111' && (
+        {/* Contextual alerts for this stop */}
+        {stopAlerts.map(alert => (
           <AlertBanner
-            level="warning"
-            title="Route 4 — delays expected"
-            description="Road works on Kauppakatu until 18:00"
+            key={alert.id}
+            level={alert.severity.toLowerCase() as 'info' | 'warning' | 'severe'}
+            title={alert.headerText}
+            description={alert.descriptionText}
           />
-        )}
+        ))}
 
         {/* Departure board */}
         <DepartureBoard
