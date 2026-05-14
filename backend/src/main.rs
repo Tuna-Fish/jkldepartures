@@ -17,8 +17,10 @@ use std::collections::HashMap;
 use std::io::Read;
 use serde_json::json;
 use serde_json::Value;
+use serde::Serialize;
 use std::time::{SystemTime, UNIX_EPOCH, Duration, Instant};
 use csv::ReaderBuilder;
+use chrono::{Local, NaiveDate};
 
 static ALERTS: ArcSwapOption<String> = ArcSwapOption::const_empty();
 static STOP_NAMES: ArcSwapOption<HashMap<String, String>> = ArcSwapOption::const_empty();
@@ -39,9 +41,46 @@ pub struct Config {
 
 pub trait FetchTask: Send {
     fn next_deadline(&self) -> Instant;
-    fn set_next_deadline(&mut self, next : Instant);
-    fn delay(&self) -> Duration;
+    fn set_next_deadline(&mut self);
+    fn deadline_has_passed(&self) -> bool;
     fn run(&mut self);
+}
+
+pub struct StaticFetcher {
+    endpoint: String,
+    delay: Duration,
+    last_day_fetched: NaiveDate
+
+}
+
+impl StaticFetcher {
+    pub fn new(endpoint: &str, delay: Duration) -> Self {
+        Self {
+            endpoint: endpoint.to_string(),
+            delay,
+            last_day_fetched: NaiveDate::from_ymd_opt(-44,3,15).unwrap()
+        }
+    }
+}
+
+impl FetchTask for StaticFetcher {
+    fn next_deadline(&self) -> Instant {
+        Instant::now()
+    }
+    fn set_next_deadline(&mut self) {
+
+    }
+    fn deadline_has_passed(&self) -> bool {
+        false
+    }
+    // When staticfetcher runs, it "seizes" control of the fetch thread for a while, because other
+    // data sources depend on the static data, and static date update time varies by a few seconds.
+    // We need to make sure that no new dynamic data is used with old static data. We do this by not
+    // allowing other fetches after the static data could have update, until it has. This will cause
+    // a blip in updates at midnight
+    fn run(& mut self) {
+
+    }
 }
 
 pub struct AlertFetcher {
@@ -54,7 +93,7 @@ impl AlertFetcher {
     pub fn new(endpoint: &str,delay: Duration) -> Self {
         Self {
             endpoint: endpoint.to_string(),
-            delay: delay,
+            delay,
             next_deadline: Instant::now()
         }
     }
@@ -64,11 +103,11 @@ impl FetchTask for AlertFetcher {
     fn next_deadline(&self) -> Instant {
         self.next_deadline
     }
-    fn set_next_deadline(& mut self, next: Instant) {
-        self.next_deadline = next;
+    fn set_next_deadline(& mut self) {
+        self.next_deadline = Instant::now() + self.delay;
     }
-    fn delay (&self) -> Duration {
-        self.delay
+    fn deadline_has_passed(&self) -> bool {
+        Instant::now() >= self.next_deadline
     }
     fn run(&mut self) {
         if let Some(json) = fetch_alerts_as_json(&self.endpoint) {
@@ -87,13 +126,13 @@ impl Scheduler {
     }
     pub fn run(&mut self) {
         loop {
-            let now = Instant::now();
-            let mut next_wakeup = now + Duration::from_secs(365*24*60*60);
+            //dummy value, a very long time
+            let mut next_wakeup = Instant::now() + Duration::from_secs(365*24*60*60);
 
             for task in self.tasks.iter_mut() {
-                if now >= task.next_deadline() {
+                if task.deadline_has_passed() {
                     task.run();
-                    task.set_next_deadline(Instant::now()+task.delay());
+                    task.set_next_deadline();
                 }
                 next_wakeup = next_wakeup.min( task.next_deadline());
             }
@@ -179,6 +218,7 @@ fn process_jsonalerts(value: &mut Value, stop_names: &HashMap<String,String>){
     }
 }
 
+
 fn fetch_alerts_as_json(endpoint: &str) -> Option<String> {
     let stop_names_guard = STOP_NAMES.load();
 
@@ -217,6 +257,7 @@ fn parse_stop_names(stops : &Vec<u8>) -> HashMap<String, String> {
     }
     map
 }
+
 
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -259,9 +300,35 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .with_unique_header("Access-Control-Allow-Headers", "*")
     });
 }
+#[derive(Serialize)]
+struct BusStop<'a> {
+    stop_id: &'a str,
+    stop_name: &'a str,
+}
 
 fn stops(_request: &Request) -> Response{
-    Response::text("stops")
+    let stops_guard = STOP_NAMES.load();
+
+    let Some(stopsmap) = stops_guard.as_ref() else { return Response::empty_404() };
+
+    let time = SystemTime::now().duration_since(UNIX_EPOCH).expect("time did not work").as_millis() as i64;
+
+    let stops: Vec<BusStop> = stopsmap.iter().map(|(key, value)| BusStop {
+        stop_id: key,
+        stop_name: value
+    }).collect();
+
+    let mut response : Value = json!({
+        "fetchedAt": time,
+        "stops": stops
+    });
+
+    match serde_json::to_string(&response).ok() {
+        Some(stops_text) => Response::text(stops_text),
+        None => Response::empty_404()
+    }
+
+
 }
 
 fn stop(_request: &Request, id: u64) -> Response{
