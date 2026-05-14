@@ -1,5 +1,3 @@
-extern crate csv;
-
 use rouille::Request;
 use rouille::Response;
 use rouille::router;
@@ -23,18 +21,21 @@ use serde_json::Value;
 use serde::Serialize;
 use std::time::{SystemTime, UNIX_EPOCH, Duration, Instant};
 use csv::{ByteRecord, ReaderBuilder};
-use chrono::{DateTime,TimeDelta,Utc,Timelike};
+use chrono::{NaiveTime,DateTime,TimeDelta,Utc,Timelike};
 
 static ALERTS: ArcSwapOption<String> = ArcSwapOption::const_empty();
 static STOP_NAMES: ArcSwapOption<HashMap<String, String>> = ArcSwapOption::const_empty();
 static STOPS_LIST: ArcSwapOption<String> = ArcSwapOption::const_empty();
 static STOPS: ArcSwapOption<HashMap<String,String>> = ArcSwapOption::const_empty();
+static STOPTIMES_BY_STOP: ArcSwapOption<HashMap<String, HashMap<String,StopData>>> = ArcSwapOption::const_empty();
+
 
 static ASKCREDSSTRING: &str = r#"provide the api credentials as a base-64 encoded token
 in the environment variable APICREDS,
 see https://opendata.waltti.fi/getting-started
 "#;
 
+static TRIPUPDATEENDPOINT: &str = "https://data.waltti.fi/jyvaskyla/api/gtfsrealtime/v1.0/feed/tripupdate";
 static SERVICEALERTENDPOINT: &str = "https://data.waltti.fi/jyvaskyla/api/gtfsrealtime/v1.0/feed/servicealert";
 static STATICDATAENDPOINT: &str = "https://tvv.fra1.digitaloceanspaces.com/209.zip";
 
@@ -43,6 +44,13 @@ pub struct Config {
     #[envconfig(from = "APICREDS")]
     pub creds: String
 }
+#[derive(Copy,Clone)]
+pub struct StopData {
+    arrive: NaiveTime,
+    depart: NaiveTime,
+    sequence: u16
+}
+
 
 pub trait FetchTask: Send {
     fn next_deadline(&self) -> Instant;
@@ -99,11 +107,15 @@ impl StaticFetcher {
         }
         let stopsmap = parse_stop_names(filemap.get("stops.txt")
             .expect("Waltti failed to return stop data"));
-        let full_stop_data = parse_stops_full(filemap.get("stops.txt")
-            .expect("really should be unreachable"), fetched_at);
+
         STOPS_LIST.store(Some(Arc::new(parse_stops(&stopsmap,fetched_at))));
         STOP_NAMES.store(Some(Arc::new(stopsmap)));
+        let full_stop_data = parse_stops_full(filemap.get("stops.txt")
+                                                  .expect("really should be unreachable"), fetched_at);
         STOPS.store(Some(Arc::new(full_stop_data)));
+        let stoptimes = parse_stoptimes(filemap.get("stop_times.txt")
+                                            .expect("stoptimes missing"), fetched_at);
+        STOPTIMES_BY_STOP.store(Some(Arc::new(stoptimes)));
 
         println!("successfully fetched static data that was last updated at {} on {} ", timestamp, Utc::now());
         Ok(timestamp)
@@ -168,6 +180,22 @@ impl FetchTask for StaticFetcher {
             }
             std::thread::sleep(Duration::from_secs(5));
 
+        }
+    }
+}
+
+pub struct DepartureFetcher {
+    endpoint: String,
+    delay: Duration,
+    next_deadline: Instant
+}
+
+impl DepartureFetcher {
+    pub fn new(endpoint: &str,delay: Duration) -> Self {
+        Self {
+            endpoint: endpoint.to_string(),
+            delay,
+            next_deadline: Instant::now()
         }
     }
 }
@@ -321,6 +349,38 @@ fn parse_stop_names(stops : &Vec<u8>) -> HashMap<String, String> {
     }
     map
 }
+
+
+fn parse_record(record: &ByteRecord) -> Option<(String,String,StopData)> {
+    let trip_id = std::str::from_utf8(record.get(0)?).ok()?.to_string();
+    let arrival = std::str::from_utf8(record.get(1)?).ok()?;
+    let depart =  std::str::from_utf8(record.get(2)?).ok()?;
+    let stop_id = std::str::from_utf8(record.get(3)?).ok()?.to_string();
+    let stop_seq = std::str::from_utf8(record.get(4)?).ok()?;
+
+    Some((trip_id,stop_id,StopData{
+        arrive: NaiveTime::parse_from_str(arrival, "%H:%M:%S").ok()?,
+        depart: NaiveTime::parse_from_str(depart, "%H:%M:%S").ok()?,
+        sequence: stop_seq.parse().ok()?,
+    }))
+}
+
+fn parse_stoptimes(data: &Vec<u8>, fetched_at: i64) -> HashMap<String, HashMap<String,StopData>> {
+    let mut stops: HashMap<String,HashMap<String,StopData>> = HashMap::new();
+    let mut rdr = ReaderBuilder::new().has_headers(true).from_reader(data.as_slice());
+
+    for result in rdr.byte_records() {
+        let Ok(record) = result else { continue };
+        let Some((trip_id, stop_id, stopdata)) = parse_record(&record) else { continue };
+        stops
+            .entry(stop_id)
+            .or_default()
+            .insert(trip_id,stopdata);
+    }
+
+    stops
+}
+
 // zero copy returns a valid utf-8 reference or ""
 fn bytesref_to_str(data: Option<&[u8]>) -> &str {
     data
@@ -334,30 +394,29 @@ fn parse_stops_full(stops : &Vec<u8>, fetched_at: i64) -> HashMap<String, String
 
     // byte records avoids potential errors in utf8 parsing if data contains invalid values
     for result in rdr.byte_records() {
-        if let Ok(record) = result {
-            // require that all returned records have at least id and name
-            if let(Some(id_bytes), Some(name_bytes)) = (record.get(0), record.get(2)) {
-                let id = String::from_utf8_lossy(id_bytes);
-                let name = String::from_utf8_lossy(name_bytes);
+        let Ok(record) = result else { continue };
+        // require that all returned records have at least id and name
+        if let(Some(id_bytes), Some(name_bytes)) = (record.get(0), record.get(2)) {
+            let id = String::from_utf8_lossy(id_bytes);
+            let name = String::from_utf8_lossy(name_bytes);
 
 
-                let jsonstops : Value = json!({
-                    "fetchedAt": fetched_at,
-                    "name": name,
-                    // rest of the fields are optional, provided if found
-                    "lat" : bytesref_to_str(record.get(3)),
-                    "lon" : bytesref_to_str(record.get(4)),
-                    "zone_id" : bytesref_to_str(record.get(5)),
-                    "location_type" : bytesref_to_str(record.get(7)),
-                    "municipality_id" : bytesref_to_str(record.get(9)),
-                    "wheelchair_boarding" : bytesref_to_str(record.get(12)),
-                    "platform_code" : bytesref_to_str(record.get(13)),
-                    "vehicle_type" : bytesref_to_str(record.get(14)),
+            let jsonstops : Value = json!({
+                "fetchedAt": fetched_at,
+                "name": name,
+                // rest of the fields are optional, provided if found
+                "lat" : bytesref_to_str(record.get(3)),
+                "lon" : bytesref_to_str(record.get(4)),
+                "zone_id" : bytesref_to_str(record.get(5)),
+                "location_type" : bytesref_to_str(record.get(7)),
+                "municipality_id" : bytesref_to_str(record.get(9)),
+                "wheelchair_boarding" : bytesref_to_str(record.get(12)),
+                "platform_code" : bytesref_to_str(record.get(13)),
+                "vehicle_type" : bytesref_to_str(record.get(14)),
 
-                });
-                let json = serde_json::to_string(&jsonstops).expect("failed to serialize data");
-                map.insert(id.to_string(),json);
-            }
+            });
+            let json = serde_json::to_string(&jsonstops).expect("failed to serialize data");
+            map.insert(id.to_string(),json);
         }
     }
     map
