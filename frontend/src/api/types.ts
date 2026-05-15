@@ -15,6 +15,34 @@ export interface FreshData<T> {
   isStale: boolean    // true if older than the feed's max age
 }
 
+// ── Stops ───────────────────────────────────────────────────────────────────
+
+export interface Stop {
+  id: string
+  name: string
+}
+
+export interface StopMetadata extends Stop {
+  latitude?: number
+  longitude?: number
+  locationType?: string
+  municipalityId?: string
+  platformCode?: string
+  vehicleType?: string
+  wheelchairBoarding?: string
+  zoneId?: string
+}
+
+export interface StopsResult {
+  stops: Stop[]
+  fetchedAt: number
+}
+
+export interface StopMetadataResult {
+  stop: StopMetadata
+  fetchedAt: number
+}
+
 // ── Service Alerts ───────────────────────────────────────────────────────────
 
 export type AlertSeverity = 'INFO' | 'WARNING' | 'SEVERE' | 'UNKNOWN'
