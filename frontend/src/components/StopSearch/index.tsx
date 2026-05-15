@@ -1,23 +1,8 @@
 // src/components/StopSearch/index.tsx
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-
-interface RecentStop {
-  id: string
-  name: string
-  routes: string
-}
-
-// Placeholder data — will be replaced with real stop data
-// once the GTFS static feed integration is complete
-const MOCK_STOPS: RecentStop[] = [
-  { id: '1111', name: 'Keskusta (M)',  routes: 'Routes 1, 4, 7, 12, 25' },
-  { id: '2203', name: 'Mattilanniemi', routes: 'Routes 12, 25' },
-  { id: '3041', name: 'Yliopisto',     routes: 'Routes 7, 8, 9' },
-  { id: '1084', name: 'Hämeenkatu',   routes: 'Routes 1, 3, 6' },
-  { id: '4012', name: 'Keljonkangas', routes: 'Routes 12, 15' },
-  { id: '2110', name: 'Tourula',       routes: 'Routes 25, 26' },
-]
+import { useStops } from '../../hooks/useStops'
+import type { Stop } from '../../api/types'
 
 const SearchIcon = () => (
   <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
@@ -37,15 +22,18 @@ const ChevronIcon = () => (
 export default function StopSearch() {
   const [query, setQuery] = useState('')
   const navigate = useNavigate()
+  const { data, isLoading, isError } = useStops()
 
-  const filtered = query.trim().length > 0
-    ? MOCK_STOPS.filter(s =>
-        s.name.toLowerCase().includes(query.toLowerCase()) ||
-        s.id.includes(query)
+  const stops = data?.stops ?? []
+  const normalizedQuery = query.trim().toLowerCase()
+  const filtered = normalizedQuery.length > 0
+    ? stops.filter(s =>
+        s.name.toLowerCase().includes(normalizedQuery) ||
+        s.id.includes(normalizedQuery)
       )
-    : MOCK_STOPS.slice(0, 4)
+    : stops.slice(0, 4)
 
-  const handleSelect = (stop: RecentStop) => {
+  const handleSelect = (stop: Stop) => {
     navigate(`/stop/${stop.id}`)
   }
 
@@ -76,7 +64,15 @@ export default function StopSearch() {
 
       {/* Stop list */}
       <div className="flex flex-col gap-2">
-        {filtered.length === 0 ? (
+        {isLoading ? (
+          <p className="text-[13px] text-slate-500 py-4 text-center">
+            Loading stops…
+          </p>
+        ) : isError ? (
+          <p className="text-[13px] text-rose-300 py-4 text-center">
+            Stops could not be loaded.
+          </p>
+        ) : filtered.length === 0 ? (
           <p className="text-[13px] text-slate-500 py-4 text-center">
             No stops found for "{query}"
           </p>
@@ -102,7 +98,7 @@ export default function StopSearch() {
                   {stop.name}
                 </p>
                 <p className="text-[12px] text-slate-500 mt-0.5 truncate">
-                  {stop.routes}
+                  Stop {stop.id}
                 </p>
               </div>
               <ChevronIcon />
