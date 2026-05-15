@@ -21,13 +21,15 @@ use serde_json::Value;
 use serde::Serialize;
 use std::time::{SystemTime, UNIX_EPOCH, Duration, Instant};
 use csv::{ByteRecord, ReaderBuilder};
-use chrono::{NaiveTime,DateTime,TimeDelta,Utc,Timelike};
+use chrono::{NaiveTime,DateTime,TimeDelta,Utc,Timelike,Local};
+use ustr::{Ustr, ustr,UstrMap};
+use std::cmp::Ordering;
 
 static ALERTS: ArcSwapOption<String> = ArcSwapOption::const_empty();
-static STOP_NAMES: ArcSwapOption<HashMap<String, String>> = ArcSwapOption::const_empty();
+static STOP_NAMES: ArcSwapOption<UstrMap<Ustr>> = ArcSwapOption::const_empty();
 static STOPS_LIST: ArcSwapOption<String> = ArcSwapOption::const_empty();
-static STOPS: ArcSwapOption<HashMap<String,String>> = ArcSwapOption::const_empty();
-static STOPTIMES_BY_STOP: ArcSwapOption<HashMap<String, HashMap<String,StopData>>> = ArcSwapOption::const_empty();
+static STOPS: ArcSwapOption<UstrMap<String>> = ArcSwapOption::const_empty();
+static STOPTIMES_BY_STOP: ArcSwapOption<UstrMap<Vec<StopData>>> = ArcSwapOption::const_empty();
 
 
 static ASKCREDSSTRING: &str = r#"provide the api credentials as a base-64 encoded token
@@ -44,12 +46,15 @@ pub struct Config {
     #[envconfig(from = "APICREDS")]
     pub creds: String
 }
-#[derive(Copy,Clone)]
+#[derive(Copy,Clone, PartialEq, Eq, Ord, PartialOrd, Debug)]
 pub struct StopData {
-    arrive: NaiveTime,
     depart: NaiveTime,
+    arrive: NaiveTime,
+    trip_id: Ustr,
     sequence: u16
 }
+
+
 
 
 pub trait FetchTask: Send {
@@ -282,13 +287,13 @@ fn fetchwithauth(url: &str) -> Option<Bytes> {
 }
 // Adds names alongside id:s, and removes null values from response
 // (unless they are just added unfound names)
-fn process_jsonalerts(value: &mut Value, stop_names: &HashMap<String,String>){
+fn process_jsonalerts(value: &mut Value, stop_names: &UstrMap<Ustr>){
     match value{
         Value::Object(map) => {
             let mut additions = Vec::new();
 
             if let Some(Value::String(id)) = map.get("stop_id") {
-                let name = stop_names.get(id).cloned();
+                let name = stop_names.get(&ustr(id)).cloned();
                 additions.push(("stop_name", json!(name)));
             }
             for (k,v) in additions {
@@ -328,56 +333,59 @@ fn fetch_alerts_as_json(endpoint: &str) -> Option<String> {
     });
 
 
-    process_jsonalerts(&mut response, stop_names);
+    process_jsonalerts(&mut response, &**stop_names);
     serde_json::to_string(&response).ok()
 }
 
-fn parse_stop_names(stops : &Vec<u8>) -> HashMap<String, String> {
-    let mut map = HashMap::new();
+fn parse_stop_names(stops : &Vec<u8>) -> UstrMap<Ustr> {
+    let mut map = UstrMap::default();
     let mut rdr = ReaderBuilder::new().has_headers(true).from_reader(stops.as_slice());
 
-    // byte records avoids potential errors in utf8 parsing
+
     for result in rdr.byte_records() {
         if let Ok(record) = result {
-            if let(Some(id_bytes), Some(name_bytes)) = (record.get(0), record.get(2)) {
-                let id = String::from_utf8_lossy(id_bytes).into_owned();
-                let name = String::from_utf8_lossy(name_bytes).into_owned();
+            if let(Some(id), Some(name)) =
+                (record.get(0).and_then(|bytes| std::str::from_utf8(bytes).ok()),
+                 record.get(2).and_then(|bytes| std::str::from_utf8(bytes).ok())) {
 
-                map.insert(id,name);
+                map.insert(ustr(id),ustr(name));
             }
         }
     }
     map
 }
 
-
-fn parse_record(record: &ByteRecord) -> Option<(String,String,StopData)> {
-    let trip_id = std::str::from_utf8(record.get(0)?).ok()?.to_string();
+// if any of the fields fails to parse, we toss the record.
+fn parse_record(record: &ByteRecord) -> Option<(Ustr, StopData)> {
+    let trip_id = ustr(std::str::from_utf8(record.get(0)?).ok()?);
     let arrival = std::str::from_utf8(record.get(1)?).ok()?;
     let depart =  std::str::from_utf8(record.get(2)?).ok()?;
-    let stop_id = std::str::from_utf8(record.get(3)?).ok()?.to_string();
+    let stop_id = ustr(std::str::from_utf8(record.get(3)?).ok()?);
     let stop_seq = std::str::from_utf8(record.get(4)?).ok()?;
 
-    Some((trip_id,stop_id,StopData{
+    Some((stop_id,StopData{
         arrive: NaiveTime::parse_from_str(arrival, "%H:%M:%S").ok()?,
         depart: NaiveTime::parse_from_str(depart, "%H:%M:%S").ok()?,
         sequence: stop_seq.parse().ok()?,
+        trip_id
     }))
 }
 
-fn parse_stoptimes(data: &Vec<u8>, fetched_at: i64) -> HashMap<String, HashMap<String,StopData>> {
-    let mut stops: HashMap<String,HashMap<String,StopData>> = HashMap::new();
+fn parse_stoptimes(data: &Vec<u8>, fetched_at: i64) -> UstrMap<Vec<StopData>> {
+    let mut stops: UstrMap<Vec<StopData>> = UstrMap::default();
     let mut rdr = ReaderBuilder::new().has_headers(true).from_reader(data.as_slice());
 
     for result in rdr.byte_records() {
         let Ok(record) = result else { continue };
-        let Some((trip_id, stop_id, stopdata)) = parse_record(&record) else { continue };
+        let Some((stop_id, stopdata)) = parse_record(&record) else { continue };
         stops
             .entry(stop_id)
             .or_default()
-            .insert(trip_id,stopdata);
+            .push(stopdata);
     }
-
+    for vec in stops.values_mut() {
+        vec.sort();
+    }
     stops
 }
 
@@ -388,17 +396,17 @@ fn bytesref_to_str(data: Option<&[u8]>) -> &str {
         .unwrap_or("")
 }
 
-fn parse_stops_full(stops : &Vec<u8>, fetched_at: i64) -> HashMap<String, String> {
-    let mut map :HashMap<String, String> = HashMap::new();
+fn parse_stops_full(stops : &Vec<u8>, fetched_at: i64) -> UstrMap<String> {
+    let mut map :UstrMap<String> = UstrMap::default();
     let mut rdr = ReaderBuilder::new().has_headers(true).from_reader(stops.as_slice());
 
     // byte records avoids potential errors in utf8 parsing if data contains invalid values
     for result in rdr.byte_records() {
         let Ok(record) = result else { continue };
         // require that all returned records have at least id and name
-        if let(Some(id_bytes), Some(name_bytes)) = (record.get(0), record.get(2)) {
-            let id = String::from_utf8_lossy(id_bytes);
-            let name = String::from_utf8_lossy(name_bytes);
+        if let(Some(id), Some(name)) =
+            (record.get(0).and_then(|bytes| std::str::from_utf8(bytes).ok()),
+             record.get(2).and_then(|bytes| std::str::from_utf8(bytes).ok())) {
 
 
             let jsonstops : Value = json!({
@@ -416,7 +424,7 @@ fn parse_stops_full(stops : &Vec<u8>, fetched_at: i64) -> HashMap<String, String
 
             });
             let json = serde_json::to_string(&jsonstops).expect("failed to serialize data");
-            map.insert(id.to_string(),json);
+            map.insert(ustr(id),json);
         }
     }
     map
@@ -485,7 +493,7 @@ struct BusStop<'a> {
     stop_id: &'a str,
     stop_name: &'a str,
 }
-fn parse_stops(stopsmap : &HashMap<String,String>, fetched_at: i64) -> String {
+fn parse_stops(stopsmap : &UstrMap<Ustr>, fetched_at: i64) -> String {
     let stops: Vec<BusStop> = stopsmap.iter().map(|(key, value)| BusStop {
         stop_id: key,
         stop_name: value
@@ -513,7 +521,7 @@ fn stop(_request: &Request, id: String) -> Response{
     match &*stops_guard {
         None => jsonerror(500, "static data load failure"),
         Some(stops_map) => {
-            if let Some(json) = (&**stops_map).get(&id) {
+            if let Some(json) = (&**stops_map).get(&ustr(&id)) {
                 Response::text(json)
             } else {
                 jsonerror(404, "stop not found")
@@ -522,9 +530,24 @@ fn stop(_request: &Request, id: String) -> Response{
         }
     }
 }
-
+fn departures_later_than(stoptimes: &Vec<StopData>, time: NaiveTime) -> &[StopData]{
+    let index = stoptimes.partition_point(|x | x.depart < time);
+    &stoptimes[index..]
+}
 fn departures(_request: &Request, id: String) -> Response{
-    Response::text(format!("departures id {id}"))
+    let stoptimesguard = STOPTIMES_BY_STOP.load();
+
+    match &*stoptimesguard{
+        Some(times_by_stop) => {
+            let Some(stopinfo) = times_by_stop.get(&ustr(&id))
+                else { return jsonerror(404,"could not find stop")};
+            let localtime : NaiveTime = Local::now().time();
+            let departures = departures_later_than(stopinfo,localtime);
+            Response::text(format!("departures id {id}, {departures:?}", ))
+        }
+        None => jsonerror(500,"static data load failure")
+    }
+
 }
 fn alerts(_request: &Request) -> Response{
     let alertsguard = ALERTS.load();
