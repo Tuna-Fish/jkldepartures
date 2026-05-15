@@ -9,7 +9,7 @@ use std::sync::LazyLock;
 use reqwest::blocking::Client;
 use reqwest::header::{HeaderValue, AUTHORIZATION};
 use bytes::Bytes;
-use gtfs_realtime::FeedMessage;
+use gtfs_realtime::{FeedMessage, TripUpdate};
 use prost::Message;
 use zip;
 use std::error::Error;
@@ -29,7 +29,8 @@ static ALERTS: ArcSwapOption<String> = ArcSwapOption::const_empty();
 static STOP_NAMES: ArcSwapOption<UstrMap<Ustr>> = ArcSwapOption::const_empty();
 static STOPS_LIST: ArcSwapOption<String> = ArcSwapOption::const_empty();
 static STOPS: ArcSwapOption<UstrMap<String>> = ArcSwapOption::const_empty();
-static STOPTIMES_BY_STOP: ArcSwapOption<UstrMap<Vec<StopData>>> = ArcSwapOption::const_empty();
+static STOPTIMES_BY_STOP: ArcSwapOption<(UstrMap<Vec<StopData>>,i64)> = ArcSwapOption::const_empty();
+static TRIPUPDATES: ArcSwapOption<(UstrMap<UpdateData>,i64)> = ArcSwapOption::const_empty();
 
 
 static ASKCREDSSTRING: &str = r#"provide the api credentials as a base-64 encoded token
@@ -46,7 +47,7 @@ pub struct Config {
     #[envconfig(from = "APICREDS")]
     pub creds: String
 }
-#[derive(Copy,Clone, PartialEq, Eq, Ord, PartialOrd, Debug)]
+#[derive(Copy,Clone, PartialEq, Eq, Ord, PartialOrd, Debug, Serialize)]
 pub struct StopData {
     depart: NaiveTime,
     arrive: NaiveTime,
@@ -54,6 +55,9 @@ pub struct StopData {
     sequence: u16
 }
 
+pub struct UpdateData {
+
+}
 
 
 
@@ -189,21 +193,6 @@ impl FetchTask for StaticFetcher {
     }
 }
 
-pub struct DepartureFetcher {
-    endpoint: String,
-    delay: Duration,
-    next_deadline: Instant
-}
-
-impl DepartureFetcher {
-    pub fn new(endpoint: &str,delay: Duration) -> Self {
-        Self {
-            endpoint: endpoint.to_string(),
-            delay,
-            next_deadline: Instant::now()
-        }
-    }
-}
 
 pub struct AlertFetcher {
     endpoint: String,
@@ -221,11 +210,36 @@ impl AlertFetcher {
     }
 }
 
-impl FetchTask for AlertFetcher {
-    fn next_deadline(&self) -> Instant {
-        self.next_deadline
+pub struct TripUpdateFetcher{
+    endpoint: String,
+    delay: Duration,
+    next_deadline: Instant
+}
+
+impl TripUpdateFetcher {
+    pub fn new(endpoint: &str, delay: Duration) -> Self {
+        Self {
+            endpoint: endpoint.to_string(),
+            delay,
+            next_deadline: Instant::now()
+        }
     }
-    fn set_next_deadline(& mut self) {
+}
+
+impl FetchTask for TripUpdateFetcher {
+    fn next_deadline(&self) -> Instant { self.next_deadline }
+    fn set_next_deadline(&mut self) { self.next_deadline = Instant::now() + self.delay; }
+    fn deadline_has_passed(&self) -> bool { Instant::now() >= self.next_deadline }
+    fn run(&mut self) {
+        if let Some(updates) = fetch_tripupdate(&self.endpoint) {
+            TRIPUPDATES.store(Some(Arc::new(updates)));
+        }
+    }
+}
+
+impl FetchTask for AlertFetcher {
+    fn next_deadline(&self) -> Instant { self.next_deadline }
+    fn set_next_deadline(&mut self) {
         self.next_deadline = Instant::now() + self.delay;
     }
     fn deadline_has_passed(&self) -> bool {
@@ -285,6 +299,8 @@ fn fetchwithauth(url: &str) -> Option<Bytes> {
         Some(response.bytes().ok()?)
     }
 }
+
+
 // Adds names alongside id:s, and removes null values from response
 // (unless they are just added unfound names)
 fn process_jsonalerts(value: &mut Value, stop_names: &UstrMap<Ustr>){
@@ -313,6 +329,33 @@ fn process_jsonalerts(value: &mut Value, stop_names: &UstrMap<Ustr>){
         }
         _ => {}
     }
+}
+
+fn testd(update: TripUpdate) -> Option<()> {
+    for stoptime in update.stop_time_update.iter() {
+        if stoptime.departure?.delay.is_some()
+        {
+            println!("{update:?}");
+            return Some(());
+        }
+    }
+    return None;
+}
+
+
+fn fetch_tripupdate(endpoint: &str) -> Option<(UstrMap<UpdateData>, i64)> {
+    let bytes = fetchwithauth(endpoint)?;
+    let time = SystemTime::now().duration_since(UNIX_EPOCH).expect("time did not work").as_millis() as i64;
+    let feed = FeedMessage::decode(bytes).ok()?;
+    let map: UstrMap<UpdateData> = UstrMap::default();
+
+    for entity in feed.entity {
+        let Some(trip_update) = entity.trip_update else {continue;};
+        if testd(trip_update).is_some() {
+            break;
+        }
+    }
+    None
 }
 
 
@@ -371,7 +414,7 @@ fn parse_record(record: &ByteRecord) -> Option<(Ustr, StopData)> {
     }))
 }
 
-fn parse_stoptimes(data: &Vec<u8>, fetched_at: i64) -> UstrMap<Vec<StopData>> {
+fn parse_stoptimes(data: &Vec<u8>, fetched_at: i64) -> (UstrMap<Vec<StopData>>, i64) {
     let mut stops: UstrMap<Vec<StopData>> = UstrMap::default();
     let mut rdr = ReaderBuilder::new().has_headers(true).from_reader(data.as_slice());
 
@@ -386,7 +429,7 @@ fn parse_stoptimes(data: &Vec<u8>, fetched_at: i64) -> UstrMap<Vec<StopData>> {
     for vec in stops.values_mut() {
         vec.sort();
     }
-    stops
+    (stops, fetched_at)
 }
 
 // zero copy returns a valid utf-8 reference or ""
@@ -457,6 +500,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let tasks : Vec<Box<dyn FetchTask>> = vec![
         Box::new(StaticFetcher::new(STATICDATAENDPOINT )) as Box<dyn FetchTask>,
         Box::new(AlertFetcher::new(SERVICEALERTENDPOINT, Duration::from_secs(61))) as Box<dyn FetchTask>,
+        Box::new( TripUpdateFetcher::new(TRIPUPDATEENDPOINT,Duration::from_secs(31))) as Box<dyn FetchTask>,
 
     ];
 
@@ -534,16 +578,34 @@ fn departures_later_than(stoptimes: &Vec<StopData>, time: NaiveTime) -> &[StopDa
     let index = stoptimes.partition_point(|x | x.depart < time);
     &stoptimes[index..]
 }
+
+fn within_4_h(dep_time:NaiveTime, now: NaiveTime) -> bool {
+    let diff = dep_time - now;
+    let forward_minutes = (diff.num_minutes() + 1440) % 1440;
+    forward_minutes <= 240
+}
+
 fn departures(_request: &Request, id: String) -> Response{
     let stoptimesguard = STOPTIMES_BY_STOP.load();
 
-    match &*stoptimesguard{
-        Some(times_by_stop) => {
+    match stoptimesguard.as_ref() {
+        Some(arc) => {
+            let (times_by_stop, fetched_at) = &**arc;
             let Some(stopinfo) = times_by_stop.get(&ustr(&id))
                 else { return jsonerror(404,"could not find stop")};
             let localtime : NaiveTime = Local::now().time();
-            let departures = departures_later_than(stopinfo,localtime);
-            Response::text(format!("departures id {id}, {departures:?}", ))
+            let departures : Vec<&StopData> =
+                departures_later_than(stopinfo,localtime)
+                    .into_iter()
+                    .take(20)
+                    .take_while(|stop| within_4_h(stop.depart, localtime))
+                    .collect();
+
+            let jsondepartures : Value = json!({
+                "fetchedAt": fetched_at,
+                "departures" : departures
+                });
+            Response::text(jsondepartures.to_string())
         }
         None => jsonerror(500,"static data load failure")
     }
