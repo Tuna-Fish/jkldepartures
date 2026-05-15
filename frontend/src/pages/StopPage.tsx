@@ -5,7 +5,7 @@ import DepartureBoard from '../components/DepartureBoard'
 import AlertBanner from '../components/AlertBanner'
 import FreshnessIndicator from '../components/FreshnessIndicator'
 import type { Departure } from '../api/types'
-import { useStops } from '../hooks/useStops'
+import { useStop } from '../hooks/useStops'
 
 // ── Temporary mock data ───────────────────────────────────────────────────────
 // Replace useMockDepartures() with useDepartures(stopId) in Step 4
@@ -88,21 +88,36 @@ function useMockDepartures(): {
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
+function metadataValue(value: string | number | undefined): string {
+  if (value === undefined || value === '') return 'Unknown'
+  return String(value)
+}
+
+function wheelchairLabel(value: string | undefined): string | undefined {
+  if (value === '1') return 'Accessible boarding'
+  if (value === '2') return 'No accessible boarding'
+  return undefined
+}
+
 export default function StopPage() {
   const { stopId = '' } = useParams()
   const navigate = useNavigate()
   const {
-    data: stopsData,
+    data: stopData,
     isLoading: isStopLoading,
     isError: isStopError,
-  } = useStops()
+  } = useStop(stopId)
 
   const { departures, isLoading, isError, fetchedAt: departuresFetchedAt } =
     useMockDepartures()
 
-  const stop = stopsData?.stops.find(candidate => candidate.id === stopId)
+  const stop = stopData?.stop
   const stopName = stop?.name ?? (isStopLoading ? 'Loading stop…' : `Stop ${stopId}`)
-  const fetchedAt = stopsData?.fetchedAt ?? departuresFetchedAt
+  const fetchedAt = stopData?.fetchedAt ?? departuresFetchedAt
+  const coordinates = stop?.latitude !== undefined && stop.longitude !== undefined
+    ? `${stop.latitude.toFixed(5)}, ${stop.longitude.toFixed(5)}`
+    : undefined
+  const accessibility = wheelchairLabel(stop?.wheelchairBoarding)
 
   return (
     <div className="flex flex-col">
@@ -145,6 +160,40 @@ export default function StopPage() {
               </span>
             )}
           </div>
+          {stop && (
+            <div className="grid grid-cols-2 gap-x-4 gap-y-3 mt-4 pt-3.5
+              border-t border-surface-border">
+              <div>
+                <p className="text-[11px] text-slate-600">Zone</p>
+                <p className="text-[13px] font-medium text-slate-300">
+                  {metadataValue(stop.zoneId)}
+                </p>
+              </div>
+              <div>
+                <p className="text-[11px] text-slate-600">Platform</p>
+                <p className="text-[13px] font-medium text-slate-300">
+                  {metadataValue(stop.platformCode)}
+                </p>
+              </div>
+              <div>
+                <p className="text-[11px] text-slate-600">Municipality</p>
+                <p className="text-[13px] font-medium text-slate-300">
+                  {metadataValue(stop.municipalityId)}
+                </p>
+              </div>
+              <div>
+                <p className="text-[11px] text-slate-600">Coordinates</p>
+                <p className="text-[13px] font-medium text-slate-300">
+                  {metadataValue(coordinates)}
+                </p>
+              </div>
+              {accessibility && (
+                <p className="col-span-2 text-[12px] text-slate-400">
+                  {accessibility}
+                </p>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Contextual alert — shown only for stop 1111 as demo */}

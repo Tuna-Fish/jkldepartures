@@ -22,8 +22,24 @@ export interface Stop {
   name: string
 }
 
+export interface StopMetadata extends Stop {
+  latitude?: number
+  longitude?: number
+  locationType?: string
+  municipalityId?: string
+  platformCode?: string
+  vehicleType?: string
+  wheelchairBoarding?: string
+  zoneId?: string
+}
+
 export interface StopsResult {
   stops: Stop[]
+  fetchedAt: number
+}
+
+export interface StopMetadataResult {
+  stop: StopMetadata
   fetchedAt: number
 }
 
