@@ -4,7 +4,8 @@ import { useState } from 'react'
 import DepartureBoard from '../components/DepartureBoard'
 import AlertBanner from '../components/AlertBanner'
 import FreshnessIndicator from '../components/FreshnessIndicator'
-import type { Departure } from '../api/types'
+import type { AlertSeverity, Departure, ServiceAlert } from '../api/types'
+import { useAlerts } from '../hooks/useAlerts'
 import { useStop } from '../hooks/useStops'
 
 // ── Temporary mock data ───────────────────────────────────────────────────────
@@ -99,6 +100,29 @@ function wheelchairLabel(value: string | undefined): string | undefined {
   return undefined
 }
 
+function alertLevel(severity: AlertSeverity) {
+  if (severity === 'SEVERE') return 'severe'
+  if (severity === 'WARNING') return 'warning'
+  return 'info'
+}
+
+function isResolved(alert: ServiceAlert): boolean {
+  if (alert.activePeriods.length === 0) return false
+
+  const nowSec = Date.now() / 1000
+  return alert.activePeriods.every(p => p.end !== undefined && p.end < nowSec)
+}
+
+function isAlertForStop(alert: ServiceAlert, stopId: string): boolean {
+  return alert.affectedStops.includes(stopId)
+}
+
+function alertTitle(alert: ServiceAlert): string {
+  if (alert.affectedRoutes.length === 0) return alert.headerText
+
+  return `Route ${alert.affectedRoutes.join(', ')} - ${alert.headerText}`
+}
+
 export default function StopPage() {
   const { stopId = '' } = useParams()
   const navigate = useNavigate()
@@ -107,11 +131,14 @@ export default function StopPage() {
     isLoading: isStopLoading,
     isError: isStopError,
   } = useStop(stopId)
+  const { data: alertsData } = useAlerts()
 
   const { departures, isLoading, isError, fetchedAt: departuresFetchedAt } =
     useMockDepartures()
 
   const stop = stopData?.stop
+  const stopAlerts = (alertsData?.alerts ?? [])
+    .filter(alert => !isResolved(alert) && isAlertForStop(alert, stopId))
   const stopName = stop?.name ?? (isStopLoading ? 'Loading stop…' : `Stop ${stopId}`)
   const fetchedAt = stopData?.fetchedAt ?? departuresFetchedAt
   const coordinates = stop?.latitude !== undefined && stop.longitude !== undefined
@@ -196,14 +223,14 @@ export default function StopPage() {
           )}
         </div>
 
-        {/* Contextual alert — shown only for stop 1111 as demo */}
-        {stopId === '1111' && (
+        {stopAlerts.map(alert => (
           <AlertBanner
-            level="warning"
-            title="Route 4 — delays expected"
-            description="Road works on Kauppakatu until 18:00"
+            key={alert.id}
+            level={alertLevel(alert.severity)}
+            title={alertTitle(alert)}
+            description={alert.descriptionText || alert.effect.replaceAll('_', ' ')}
           />
-        )}
+        ))}
 
         {/* Departure board */}
         <DepartureBoard
