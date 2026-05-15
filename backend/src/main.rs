@@ -21,7 +21,7 @@ use serde_json::Value;
 use serde::Serialize;
 use std::time::{SystemTime, UNIX_EPOCH, Duration, Instant};
 use csv::{ByteRecord, ReaderBuilder};
-use chrono::{NaiveTime,DateTime,TimeDelta,Utc,Timelike,Local};
+use chrono::{FixedOffset,NaiveTime,DateTime,TimeDelta,Utc,Timelike,Local};
 use ustr::{Ustr, ustr,UstrMap};
 use std::cmp::Ordering;
 
@@ -593,7 +593,9 @@ fn departures(_request: &Request, id: String) -> Response{
             let (times_by_stop, fetched_at) = &**arc;
             let Some(stopinfo) = times_by_stop.get(&ustr(&id))
                 else { return jsonerror(404,"could not find stop")};
-            let localtime : NaiveTime = Local::now().time();
+                //eternal summer time
+            let offset = FixedOffset::east_opt(3*3600).expect("invalid_offset");
+            let localtime : NaiveTime = Utc::now().with_timezone(&offset).time();
             let departures : Vec<&StopData> =
                 departures_later_than(stopinfo,localtime)
                     .into_iter()
