@@ -618,6 +618,7 @@ fn parse_stops_full(stops : &Vec<u8>, fetched_at: i64) -> UstrMap<String> {
 
             let jsonstops : Value = json!({
                 "fetchedAt": fetched_at,
+                "stop" : {
                 "name": name,
                 // rest of the fields are optional, provided if found
                 "stopId": id,
@@ -629,7 +630,7 @@ fn parse_stops_full(stops : &Vec<u8>, fetched_at: i64) -> UstrMap<String> {
                 "wheelchair_boarding" : bytesref_to_str(record.get(12)),
                 "platform_code" : bytesref_to_str(record.get(13)),
                 "vehicle_type" : bytesref_to_str(record.get(14)),
-
+            }
             });
             let json = serde_json::to_string(&jsonstops).expect("failed to serialize data");
             map.insert(ustr(id),json);
