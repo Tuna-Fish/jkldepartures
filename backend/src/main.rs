@@ -662,8 +662,17 @@ fn within_4_h(dep_time:NaiveTime, now: NaiveTime) -> bool {
     forward_minutes <= 240
 }
 // today, unless already in the past and more than 8 hours ago
-fn calculate_timestamp(depart: NaiveTime, localtime: NaiveTime) -> i64 {
-0
+fn calculate_timestamp(depart: NaiveTime, localtime: DateTime<FixedOffset>) -> i64 {
+    let mut depart_dt = localtime
+        .date_naive()
+        .and_time(depart)
+        .and_local_timezone(localtime.timezone())
+        .unwrap();
+
+    if localtime.signed_duration_since(depart_dt) > chrono::TimeDelta::hours(8) {
+        depart_dt = depart_dt + chrono::TimeDelta::days(1);
+    }
+    depart_dt.timestamp()
 }
 
 fn departures(_request: &Request, id: String) -> Response{
@@ -682,12 +691,13 @@ fn departures(_request: &Request, id: String) -> Response{
 
                 //eternal summer time
             let offset = FixedOffset::east_opt(3*3600).expect("invalid_offset");
-            let localtime : NaiveTime = Utc::now().with_timezone(&offset).time();
+            let localtime= Utc::now().with_timezone(&offset);
+            let localnaivetime : NaiveTime = localtime.time();
             let departures : Vec<JoinedStopData> =
-                departures_later_than(stopinfo,localtime)
+                departures_later_than(stopinfo,localnaivetime)
                     .into_iter()
                     .take(20)
-                    .take_while(|stop| within_4_h(stop.depart, localtime))
+                    .take_while(|stop| within_4_h(stop.depart, localnaivetime))
                     .map(|stop| {
                         let trip = trips.get(&stop.trip_id);
                         let route = trip.and_then(|t| routes.get(&t.route_id));
