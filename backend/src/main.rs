@@ -9,7 +9,7 @@ use std::sync::LazyLock;
 use reqwest::blocking::Client;
 use reqwest::header::{HeaderValue, AUTHORIZATION};
 use bytes::Bytes;
-use gtfs_realtime::{FeedMessage, TripUpdate};
+use gtfs_realtime::{FeedMessage, TripUpdate, VehiclePosition};
 use gtfs_realtime::trip_update::StopTimeUpdate;
 use prost::Message;
 use zip;
@@ -35,6 +35,7 @@ static STOPTIMES_BY_STOP: ArcSwapOption<(UstrMap<Vec<StopData>>,i64)> = ArcSwapO
 static TRIPUPDATES: ArcSwapOption<UstrMap<UpdateData>> = ArcSwapOption::const_empty();
 static ROUTES: ArcSwapOption<UstrMap<Route>> = ArcSwapOption::const_empty();
 static TRIPS: ArcSwapOption<UstrMap<Trip>> = ArcSwapOption::const_empty();
+static VEHICLES: ArcSwapOption<(UstrMap<Vehicle>,i64)> = ArcSwapOption::const_empty();
 
 
 static ASKCREDSSTRING: &str = r#"provide the api credentials as a base-64 encoded token
@@ -45,6 +46,7 @@ see https://opendata.waltti.fi/getting-started
 static TRIPUPDATEENDPOINT: &str = "https://data.waltti.fi/jyvaskyla/api/gtfsrealtime/v1.0/feed/tripupdate";
 static SERVICEALERTENDPOINT: &str = "https://data.waltti.fi/jyvaskyla/api/gtfsrealtime/v1.0/feed/servicealert";
 static STATICDATAENDPOINT: &str = "https://tvv.fra1.digitaloceanspaces.com/209.zip";
+static VEHICLEUPDATEENDPOINT: &str = "https://data.waltti.fi/jyvaskyla/api/gtfsrealtime/v1.0/feed/vehicleposition";
 
 #[derive(Envconfig)]
 pub struct Config {
@@ -240,6 +242,33 @@ impl FetchTask for StaticFetcher {
     }
 }
 
+pub struct VehicleUpdateFetcher {
+    endpoint: String,
+    delay: Duration,
+    next_deadline: Instant,
+}
+
+impl VehicleUpdateFetcher {
+    pub fn new(endpoint: &str,delay: Duration) -> Self {
+        Self {
+            endpoint: endpoint.to_string(),
+            delay,
+            next_deadline: Instant::now()
+        }
+    }
+}
+
+impl FetchTask for VehicleUpdateFetcher {
+    fn next_deadline(&self) -> Instant { self.next_deadline }
+    fn set_next_deadline(&mut self) { self.next_deadline = Instant::now() + self.delay; }
+    fn deadline_has_passed(&self) -> bool { Instant::now() >= self.next_deadline }
+    fn run(&mut self) {
+        if let Some((updates,i64)) = fetch_vehicleupdate(&self.endpoint) {
+            VEHICLES.store(Some(Arc::new((updates,i64))));
+        }
+    }
+}
+
 
 pub struct AlertFetcher {
     endpoint: String,
@@ -414,7 +443,70 @@ fn fetch_tripupdate(endpoint: &str) -> Option<UstrMap<UpdateData>> {
     }
     Some(map)
 }
+#[derive(Serialize,Debug,Copy,Clone)]
+pub struct Vehicle {
+    vehicleid: Ustr,
+    vehicleLabel: Ustr,
+    tripId: Ustr,
+    routeId: Ustr,
+    routeShortName: Ustr,
+    latitude: f32,
+    longitude: f32,
+    bearing: f32,
+    speed: f32,
+    currentStopId: Ustr,
+    currentStatus: &'static str,
+    timestamp: i64,
+    directionId: u32,
+}
 
+fn parse_vehicleupdate(vu: &VehiclePosition) -> Option<Vehicle> {
+    let (latitude, longitude, speed, bearing)= if let Some(pos) = vu.position {
+        (pos.latitude,
+        pos.longitude,
+        if let Some(be) = pos.bearing {
+            be
+        } else {0.0},
+        if let Some(spe) = pos.speed {
+            spe
+        } else {0.0})
+    } else {(0.0,0.0,0.0,0.0)};
+    let (tripId, routeId, directionId) = if let Some(tripd) = &vu.trip {
+        (ustr(tripd.trip_id()),
+        ustr(tripd.route_id()),
+        tripd.direction_id())
+    } else {(ustr(""),ustr(""),0)};
+    Some(Vehicle{
+        vehicleid: ustr(vu.vehicle.as_ref().and_then(|v| v.id.as_ref())?),
+        vehicleLabel: ustr(vu.vehicle.as_ref().and_then(|v| v.label.as_deref()).unwrap_or("")),
+        tripId,
+        routeId,
+        routeShortName: ustr(""),
+        latitude,
+        longitude,
+        bearing,
+        speed,
+        currentStopId: ustr(vu.stop_id()),
+        currentStatus: vu.current_status().as_str_name(),
+        timestamp: vu.timestamp.unwrap_or(0) as i64,
+        directionId,
+    })
+}
+
+fn fetch_vehicleupdate(endpoint: &str) -> Option<(UstrMap<Vehicle>, i64)> {
+    let bytes = fetchwithauth(endpoint)?;
+    let time = SystemTime::now().duration_since(UNIX_EPOCH).expect("time did not work").as_millis() as i64;
+    let feed = FeedMessage::decode(bytes).ok()?;
+    let mut map: UstrMap<Vehicle> = UstrMap::default();
+
+    for entity in feed.entity {
+        let Some(vehicle_update) = entity.vehicle else {continue;};
+        let Some(vehicle) = parse_vehicleupdate(&vehicle_update) else {continue};
+        map.insert(vehicle.vehicleid, vehicle);
+    }
+    Some((map, time))
+
+}
 
 fn fetch_alerts_as_json(endpoint: &str) -> Option<String> {
     let stop_names_guard = STOP_NAMES.load();
@@ -667,6 +759,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Box::new(StaticFetcher::new(STATICDATAENDPOINT )) as Box<dyn FetchTask>,
         Box::new(AlertFetcher::new(SERVICEALERTENDPOINT, Duration::from_secs(61))) as Box<dyn FetchTask>,
         Box::new( TripUpdateFetcher::new(TRIPUPDATEENDPOINT,Duration::from_secs(31))) as Box<dyn FetchTask>,
+        Box::new(VehicleUpdateFetcher::new(VEHICLEUPDATEENDPOINT, Duration::from_secs(5))) as Box<dyn FetchTask>,
 
     ];
 
@@ -801,14 +894,13 @@ fn departures(_request: &Request, id: String) -> Response{
                         let mut hasRealtime: bool = false;
                         let mut delaySeconds: i64 = 0;
                         if let Some(update) = tripupdate {
-                            println!("found_tripupdate");
                             let timestamp: i64 = update.timestamp;
                             if let Some(updated_departure) = update.departure_update.get(&stop_id) {
                                 fetched_at = fetched_at.max(timestamp);
                                 realtimeDeparture = *updated_departure;
                                 delaySeconds = realtimeDeparture-scheduledDeparture;
                                 hasRealtime = true;
-                            } else {println!("but not departure {:?} : {:?}", &stop_id,update.departure_update);}
+                            }
                         }
 
 
@@ -846,6 +938,20 @@ fn alerts(_request: &Request) -> Response{
 
 }
 fn vehicles(_request: &Request) -> Response{
-    Response::text("vehicles")
+    let vehiclesguard = VEHICLES.load();
+
+    match (&*vehiclesguard).as_ref() {
+        Some(arctuple) => {
+            let (map, timestamp) = &**arctuple;
+            let vehvec: Vec<&Vehicle> = map.values().collect();
+            let json = json!({
+                "fetchedAt": timestamp,
+                "vehicles" : vehvec
+            });
+
+            Response::text(json.to_string())
+        },
+        None => jsonerror(500,"data load failure")
+    }
 }
 
