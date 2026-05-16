@@ -31,6 +31,8 @@ static STOPS_LIST: ArcSwapOption<String> = ArcSwapOption::const_empty();
 static STOPS: ArcSwapOption<UstrMap<String>> = ArcSwapOption::const_empty();
 static STOPTIMES_BY_STOP: ArcSwapOption<(UstrMap<Vec<StopData>>,i64)> = ArcSwapOption::const_empty();
 static TRIPUPDATES: ArcSwapOption<(UstrMap<UpdateData>,i64)> = ArcSwapOption::const_empty();
+static ROUTES: ArcSwapOption<UstrMap<Route>> = ArcSwapOption::const_empty();
+static TRIPS: ArcSwapOption<UstrMap<Trip>> = ArcSwapOption::const_empty();
 
 
 static ASKCREDSSTRING: &str = r#"provide the api credentials as a base-64 encoded token
@@ -49,16 +51,39 @@ pub struct Config {
 }
 #[derive(Copy,Clone, PartialEq, Eq, Ord, PartialOrd, Debug, Serialize)]
 pub struct StopData {
+    #[serde(skip_serializing)]
     depart: NaiveTime,
-    arrive: NaiveTime,
     trip_id: Ustr,
     sequence: u16
+}
+#[derive(Serialize,Debug)]
+pub struct JoinedStopData<'a> {
+    #[serde(flatten)]
+    pub stop: &'a StopData,
+    pub depart: i64,
+    #[serde(flatten)]
+    pub trip: Option<&'a Trip>,
+    #[serde(flatten)]
+    pub route: Option<&'a Route>
+}
+#[derive(Serialize,Debug)]
+pub struct Trip {
+    route_id: Ustr,
+    service_id: Ustr,
+    headsign: Ustr,
+    direction: u8,
+}
+#[derive(Serialize,Debug)]
+pub struct Route {
+    #[serde(skip_serializing)]
+    route_id: Ustr,
+    route_short_name: Ustr,
+    route_long_name: Ustr,
 }
 
 pub struct UpdateData {
 
 }
-
 
 
 pub trait FetchTask: Send {
@@ -115,16 +140,20 @@ impl StaticFetcher {
             filemap.insert(name, contents);
         }
         let stopsmap = parse_stop_names(filemap.get("stops.txt")
-            .expect("Waltti failed to return stop data"));
+            .ok_or("Waltti failed to return stop data")?);
 
         STOPS_LIST.store(Some(Arc::new(parse_stops(&stopsmap,fetched_at))));
         STOP_NAMES.store(Some(Arc::new(stopsmap)));
         let full_stop_data = parse_stops_full(filemap.get("stops.txt")
-                                                  .expect("really should be unreachable"), fetched_at);
+                                                  .ok_or("really should be unreachable")?, fetched_at);
         STOPS.store(Some(Arc::new(full_stop_data)));
         let stoptimes = parse_stoptimes(filemap.get("stop_times.txt")
-                                            .expect("stoptimes missing"), fetched_at);
+                                            .ok_or("stoptimes missing")?, fetched_at);
         STOPTIMES_BY_STOP.store(Some(Arc::new(stoptimes)));
+        let routes = parse_routes(filemap.get("routes.txt").ok_or("routes missing")?);
+        ROUTES.store(Some(Arc::new(routes)));
+        let trips = parse_trips(filemap.get("trips.txt").ok_or("trips missing")?);
+        TRIPS.store(Some(Arc::new(trips)));
 
         println!("successfully fetched static data that was last updated at {} on {} ", timestamp, Utc::now());
         Ok(timestamp)
@@ -397,20 +426,67 @@ fn parse_stop_names(stops : &Vec<u8>) -> UstrMap<Ustr> {
     }
     map
 }
+// any parse failures lead to skipping the record
+fn parse_route_record(record: &ByteRecord) -> Option<Route> {
+    let route_id = ustr(std::str::from_utf8(record.get(0)?).ok()?);
+    let route_short_name = ustr(std::str::from_utf8(record.get(2)?).ok()?);
+    let route_long_name = ustr(std::str::from_utf8(record.get(3)?).ok()?);
+
+    Some(Route {
+        route_id,
+        route_short_name,
+        route_long_name
+    })
+}
+
+fn parse_routes(data: &Vec<u8>) -> UstrMap<Route> {
+    let mut routes: UstrMap<Route> = UstrMap::default();
+    let mut rdr = ReaderBuilder::new().has_headers(true).from_reader(data.as_slice());
+    for result in rdr.byte_records() {
+        let Ok(record) = result else {continue};
+        let Some(route) = parse_route_record(&record) else {continue};
+        routes.insert(route.route_id,route);
+    }
+    routes
+}
+
+fn parse_trip_record(record: &ByteRecord) -> Option<(Ustr, Trip)> {
+    let route_id = ustr(std::str::from_utf8(record.get(0)?).ok()?);
+    let service_id = ustr(std::str::from_utf8(record.get(1)?).ok()?);
+    let trip_id = ustr(std::str::from_utf8(record.get(2)?).ok()?);
+    let headsign = ustr(std::str::from_utf8(record.get(3)?).ok()?);
+    let direction = std::str::from_utf8(record.get(4)?).ok()?.parse().ok()?;
+
+    Some((trip_id, Trip {
+        route_id,
+        service_id,
+        headsign,
+        direction,
+    }))
+}
+
+fn parse_trips(data: &Vec<u8>) -> UstrMap<Trip> {
+    let mut trips: UstrMap<Trip> = UstrMap::default();
+    let mut rdr = ReaderBuilder::new().has_headers(true).from_reader(data.as_slice());
+    for result in rdr.byte_records() {
+        let Ok(record) = result else {continue};
+        let Some((trip_id, trip)) = parse_trip_record(&record) else {continue};
+        trips.insert(trip_id, trip);
+    }
+    trips
+}
 
 // if any of the fields fails to parse, we toss the record.
-fn parse_record(record: &ByteRecord) -> Option<(Ustr, StopData)> {
+fn parse_stop_record(record: &ByteRecord) -> Option<(Ustr, StopData)> {
     let trip_id = ustr(std::str::from_utf8(record.get(0)?).ok()?);
-    let arrival = std::str::from_utf8(record.get(1)?).ok()?;
     let depart =  std::str::from_utf8(record.get(2)?).ok()?;
     let stop_id = ustr(std::str::from_utf8(record.get(3)?).ok()?);
     let stop_seq = std::str::from_utf8(record.get(4)?).ok()?;
 
     Some((stop_id,StopData{
-        arrive: NaiveTime::parse_from_str(arrival, "%H:%M:%S").ok()?,
         depart: NaiveTime::parse_from_str(depart, "%H:%M:%S").ok()?,
         sequence: stop_seq.parse().ok()?,
-        trip_id
+        trip_id,
     }))
 }
 
@@ -420,7 +496,7 @@ fn parse_stoptimes(data: &Vec<u8>, fetched_at: i64) -> (UstrMap<Vec<StopData>>, 
 
     for result in rdr.byte_records() {
         let Ok(record) = result else { continue };
-        let Some((stop_id, stopdata)) = parse_record(&record) else { continue };
+        let Some((stop_id, stopdata)) = parse_stop_record(&record) else { continue };
         stops
             .entry(stop_id)
             .or_default()
@@ -456,6 +532,7 @@ fn parse_stops_full(stops : &Vec<u8>, fetched_at: i64) -> UstrMap<String> {
                 "fetchedAt": fetched_at,
                 "name": name,
                 // rest of the fields are optional, provided if found
+                "stopId": id,
                 "lat" : bytesref_to_str(record.get(3)),
                 "lon" : bytesref_to_str(record.get(4)),
                 "zone_id" : bytesref_to_str(record.get(5)),
@@ -584,30 +661,52 @@ fn within_4_h(dep_time:NaiveTime, now: NaiveTime) -> bool {
     let forward_minutes = (diff.num_minutes() + 1440) % 1440;
     forward_minutes <= 240
 }
+// today, unless already in the past and more than 8 hours ago
+fn calculate_timestamp(depart: NaiveTime, localtime: NaiveTime) -> i64 {
+0
+}
 
 fn departures(_request: &Request, id: String) -> Response{
     let stoptimesguard = STOPTIMES_BY_STOP.load();
+    let tripsguard = TRIPS.load();
+    let routesguard= ROUTES.load();
 
-    match stoptimesguard.as_ref() {
-        Some(arc) => {
-            let (times_by_stop, fetched_at) = &**arc;
+    match (stoptimesguard.as_ref(),tripsguard.as_ref(),routesguard.as_ref()) {
+        (Some(stoparc),Some(triparc),Some(routearc)) => {
+            let (times_by_stop, fetched_at) = &**stoparc;
+            let trips = &**triparc;
+            let routes = &**routearc;
+
             let Some(stopinfo) = times_by_stop.get(&ustr(&id))
                 else { return jsonerror(404,"could not find stop")};
             let localtime : NaiveTime = Local::now().time();
-            let departures : Vec<&StopData> =
+            let departures : Vec<JoinedStopData> =
                 departures_later_than(stopinfo,localtime)
                     .into_iter()
                     .take(20)
                     .take_while(|stop| within_4_h(stop.depart, localtime))
-                    .collect();
+                    .map(|stop| {
+                        let trip = trips.get(&stop.trip_id);
+                        let route = trip.and_then(|t| routes.get(&t.route_id));
+                        let depart: i64 = calculate_timestamp(stop.depart, localtime);
+
+                        JoinedStopData {
+                            stop,
+                            depart,
+                            trip,
+                            route
+
+                        }
+                    }).collect();
 
             let jsondepartures : Value = json!({
                 "fetchedAt": fetched_at,
+                "stopId": id,
                 "departures" : departures
                 });
             Response::text(jsondepartures.to_string())
         }
-        None => jsonerror(500,"static data load failure")
+        _ => jsonerror(500,"static data load failure"),
     }
 
 }
