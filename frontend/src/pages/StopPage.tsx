@@ -1,91 +1,12 @@
 // src/pages/StopPage.tsx
 import { useParams, useNavigate } from 'react-router-dom'
-import { useState } from 'react'
 import DepartureBoard from '../components/DepartureBoard'
 import AlertBanner from '../components/AlertBanner'
 import FreshnessIndicator from '../components/FreshnessIndicator'
-import type { AlertSeverity, Departure, ServiceAlert } from '../api/types'
+import type { AlertSeverity, ServiceAlert } from '../api/types'
 import { useAlerts } from '../hooks/useAlerts'
+import { useDepartures } from '../hooks/useDepartures'
 import { useStop } from '../hooks/useStops'
-
-// ── Temporary mock data ───────────────────────────────────────────────────────
-// Replace useMockDepartures() with useDepartures(stopId) in Step 4
-// once the hooks layer is wired up.
-
-function createMockDepartureSnapshot() {
-  const fetchedAt = Date.now()
-  const now = Math.floor(fetchedAt / 1000)
-
-  return {
-    fetchedAt,
-    departures: [
-      {
-        tripId: 'trip-1', routeId: '4',
-        headsign: 'Mattilanniemi',
-        scheduledDeparture: now + 4 * 60,
-        realtimeDeparture:  now + 8 * 60,   // 4 min late
-        delaySeconds: 240, status: 'DELAYED',
-        hasRealtime: true, platform: 'A',
-      },
-      {
-        tripId: 'trip-2', routeId: '12',
-        headsign: 'Keljonkangas',
-        scheduledDeparture: now + 7 * 60,
-        realtimeDeparture:  now + 7 * 60,
-        delaySeconds: 0, status: 'ON_TIME',
-        hasRealtime: true, platform: 'B',
-      },
-      {
-        tripId: 'trip-3', routeId: '25',
-        headsign: 'Seppälä',
-        scheduledDeparture: now + 11 * 60,
-        realtimeDeparture:  now + 11 * 60,
-        delaySeconds: 0, status: 'ON_TIME',
-        hasRealtime: true, platform: 'A',
-      },
-      {
-        tripId: 'trip-4', routeId: '7',
-        headsign: 'Kuokkala',
-        scheduledDeparture: now + 14 * 60,
-        realtimeDeparture:  now + 14 * 60,
-        delaySeconds: 0, status: 'ON_TIME',
-        hasRealtime: false, platform: 'C',
-      },
-      {
-        tripId: 'trip-5', routeId: '1',
-        headsign: 'Palokka',
-        scheduledDeparture: now + 22 * 60,
-        realtimeDeparture:  now + 22 * 60,
-        delaySeconds: 0, status: 'CANCELLED',
-        hasRealtime: true, platform: 'B',
-      },
-      {
-        tripId: 'trip-6', routeId: '9',
-        headsign: 'Tikkakoski',
-        scheduledDeparture: now + 21 * 60,
-        realtimeDeparture:  now + 21 * 60,
-        delaySeconds: 0, status: 'NO_DATA',
-        hasRealtime: false, platform: 'D',
-      },
-    ] satisfies Departure[],
-  }
-}
-
-function useMockDepartures(): {
-  departures: Departure[]
-  isLoading: boolean
-  isError: boolean
-  fetchedAt: number | null
-} {
-  const [snapshot] = useState(createMockDepartureSnapshot)
-
-  return {
-    departures: snapshot.departures,
-    isLoading: false,
-    isError: false,
-    fetchedAt: snapshot.fetchedAt,
-  }
-}
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
@@ -132,15 +53,18 @@ export default function StopPage() {
     isError: isStopError,
   } = useStop(stopId)
   const { data: alertsData } = useAlerts()
-
-  const { departures, isLoading, isError, fetchedAt: departuresFetchedAt } =
-    useMockDepartures()
+  const {
+    data: departuresData,
+    isLoading,
+    isError,
+  } = useDepartures(stopId)
 
   const stop = stopData?.stop
+  const departures = departuresData?.departures ?? []
   const stopAlerts = (alertsData?.alerts ?? [])
     .filter(alert => !isResolved(alert) && isAlertForStop(alert, stopId))
   const stopName = stop?.name ?? (isStopLoading ? 'Loading stop…' : `Stop ${stopId}`)
-  const fetchedAt = stopData?.fetchedAt ?? departuresFetchedAt
+  const fetchedAt = departuresData?.fetchedAt ?? stopData?.fetchedAt ?? null
   const coordinates = stop?.latitude !== undefined && stop.longitude !== undefined
     ? `${stop.latitude.toFixed(5)}, ${stop.longitude.toFixed(5)}`
     : undefined
