@@ -9,7 +9,8 @@ use std::sync::LazyLock;
 use reqwest::blocking::Client;
 use reqwest::header::{HeaderValue, AUTHORIZATION};
 use bytes::Bytes;
-use gtfs_realtime::{FeedMessage, TripUpdate};
+use gtfs_realtime::{FeedMessage, TripUpdate, VehiclePosition};
+use gtfs_realtime::trip_update::StopTimeUpdate;
 use prost::Message;
 use zip;
 use std::error::Error;
@@ -21,16 +22,20 @@ use serde_json::Value;
 use serde::Serialize;
 use std::time::{SystemTime, UNIX_EPOCH, Duration, Instant};
 use csv::{ByteRecord, ReaderBuilder};
-use chrono::{FixedOffset,NaiveTime,DateTime,TimeDelta,Utc,Timelike,Local};
-use ustr::{Ustr, ustr,UstrMap};
+use chrono::{FixedOffset,NaiveTime,DateTime,TimeDelta,Utc,Timelike,Local,Datelike};
+use ustr::{Ustr, ustr,UstrMap,UstrSet};
 use std::cmp::Ordering;
 
+static CALENDAR: ArcSwapOption<UstrSet> = ArcSwapOption::const_empty();
 static ALERTS: ArcSwapOption<String> = ArcSwapOption::const_empty();
 static STOP_NAMES: ArcSwapOption<UstrMap<Ustr>> = ArcSwapOption::const_empty();
 static STOPS_LIST: ArcSwapOption<String> = ArcSwapOption::const_empty();
 static STOPS: ArcSwapOption<UstrMap<String>> = ArcSwapOption::const_empty();
 static STOPTIMES_BY_STOP: ArcSwapOption<(UstrMap<Vec<StopData>>,i64)> = ArcSwapOption::const_empty();
-static TRIPUPDATES: ArcSwapOption<(UstrMap<UpdateData>,i64)> = ArcSwapOption::const_empty();
+static TRIPUPDATES: ArcSwapOption<UstrMap<UpdateData>> = ArcSwapOption::const_empty();
+static ROUTES: ArcSwapOption<UstrMap<Route>> = ArcSwapOption::const_empty();
+static TRIPS: ArcSwapOption<UstrMap<Trip>> = ArcSwapOption::const_empty();
+static VEHICLES: ArcSwapOption<(UstrMap<Vehicle>,i64)> = ArcSwapOption::const_empty();
 
 
 static ASKCREDSSTRING: &str = r#"provide the api credentials as a base-64 encoded token
@@ -41,6 +46,7 @@ see https://opendata.waltti.fi/getting-started
 static TRIPUPDATEENDPOINT: &str = "https://data.waltti.fi/jyvaskyla/api/gtfsrealtime/v1.0/feed/tripupdate";
 static SERVICEALERTENDPOINT: &str = "https://data.waltti.fi/jyvaskyla/api/gtfsrealtime/v1.0/feed/servicealert";
 static STATICDATAENDPOINT: &str = "https://tvv.fra1.digitaloceanspaces.com/209.zip";
+static VEHICLEUPDATEENDPOINT: &str = "https://data.waltti.fi/jyvaskyla/api/gtfsrealtime/v1.0/feed/vehicleposition";
 
 #[derive(Envconfig)]
 pub struct Config {
@@ -49,16 +55,48 @@ pub struct Config {
 }
 #[derive(Copy,Clone, PartialEq, Eq, Ord, PartialOrd, Debug, Serialize)]
 pub struct StopData {
+    #[serde(skip_serializing)]
     depart: NaiveTime,
-    arrive: NaiveTime,
     trip_id: Ustr,
     sequence: u16
 }
-
-pub struct UpdateData {
-
+#[derive(Serialize,Debug)]
+pub struct JoinedStopData<'a> {
+    #[serde(flatten)]
+    pub stop: &'a StopData,
+    pub scheduledDeparture: i64,
+    pub realtimeDeparture: i64,
+    pub delaySeconds: i64,
+    pub status: &'static str,
+    pub hasRealtime: bool,
+    #[serde(flatten)]
+    pub trip: Option<&'a Trip>,
+    #[serde(flatten)]
+    pub route: Option<&'a Route>
 }
-
+#[derive(Serialize,Debug)]
+pub struct Trip {
+    route_id: Ustr,
+    service_id: Ustr,
+    headsign: Ustr,
+    direction: u8,
+}
+#[derive(Serialize,Debug)]
+pub struct Route {
+    #[serde(skip_serializing)]
+    route_id: Ustr,
+    route_short_name: Ustr,
+    route_long_name: Ustr,
+}
+#[derive(Debug)]
+pub struct UpdateData {
+    route_id: Ustr,
+    direction: u8,
+    vehicle_id: Ustr,
+    label: Ustr,
+    departure_update: UstrMap<i64>,
+    timestamp: i64,
+}
 
 
 pub trait FetchTask: Send {
@@ -114,17 +152,28 @@ impl StaticFetcher {
             file.read_to_end(&mut contents)?;
             filemap.insert(name, contents);
         }
+
+        let calendar = parse_calendar(
+            filemap.get("calendar.txt").ok_or("missing calendar")?,
+            filemap.get("calendar_dates.txt").ok_or("missing calendar_dates")?);
+
+
         let stopsmap = parse_stop_names(filemap.get("stops.txt")
-            .expect("Waltti failed to return stop data"));
+            .ok_or("Waltti failed to return stop data")?);
 
         STOPS_LIST.store(Some(Arc::new(parse_stops(&stopsmap,fetched_at))));
         STOP_NAMES.store(Some(Arc::new(stopsmap)));
         let full_stop_data = parse_stops_full(filemap.get("stops.txt")
-                                                  .expect("really should be unreachable"), fetched_at);
+                                                  .ok_or("really should be unreachable")?, fetched_at);
         STOPS.store(Some(Arc::new(full_stop_data)));
         let stoptimes = parse_stoptimes(filemap.get("stop_times.txt")
-                                            .expect("stoptimes missing"), fetched_at);
+                                            .ok_or("stoptimes missing")?, fetched_at, &calendar);
         STOPTIMES_BY_STOP.store(Some(Arc::new(stoptimes)));
+        let routes = parse_routes(filemap.get("routes.txt").ok_or("routes missing")?);
+        ROUTES.store(Some(Arc::new(routes)));
+        let trips = parse_trips(filemap.get("trips.txt").ok_or("trips missing")?, &calendar);
+        TRIPS.store(Some(Arc::new(trips)));
+        CALENDAR.store(Some(Arc::new(calendar)));
 
         println!("successfully fetched static data that was last updated at {} on {} ", timestamp, Utc::now());
         Ok(timestamp)
@@ -189,6 +238,33 @@ impl FetchTask for StaticFetcher {
             }
             std::thread::sleep(Duration::from_secs(5));
 
+        }
+    }
+}
+
+pub struct VehicleUpdateFetcher {
+    endpoint: String,
+    delay: Duration,
+    next_deadline: Instant,
+}
+
+impl VehicleUpdateFetcher {
+    pub fn new(endpoint: &str,delay: Duration) -> Self {
+        Self {
+            endpoint: endpoint.to_string(),
+            delay,
+            next_deadline: Instant::now()
+        }
+    }
+}
+
+impl FetchTask for VehicleUpdateFetcher {
+    fn next_deadline(&self) -> Instant { self.next_deadline }
+    fn set_next_deadline(&mut self) { self.next_deadline = Instant::now() + self.delay; }
+    fn deadline_has_passed(&self) -> bool { Instant::now() >= self.next_deadline }
+    fn run(&mut self) {
+        if let Some((updates,i64)) = fetch_vehicleupdate(&self.endpoint) {
+            VEHICLES.store(Some(Arc::new((updates,i64))));
         }
     }
 }
@@ -330,34 +406,107 @@ fn process_jsonalerts(value: &mut Value, stop_names: &UstrMap<Ustr>){
         _ => {}
     }
 }
+// helper function to make skipping stops without departure times easier
+fn parse_stoptimeupdate(stoptimeupdate: &StopTimeUpdate)-> Option<(Ustr, i64)>{
+    Some((ustr(&stoptimeupdate.stop_id.as_deref()?), stoptimeupdate.departure.as_ref()?.time?))
+}
 
-fn testd(update: TripUpdate) -> Option<()> {
-    for stoptime in update.stop_time_update.iter() {
-        if stoptime.departure?.delay.is_some()
-        {
-            println!("{update:?}");
-            return Some(());
-        }
+fn parse_tripupdate(update: &TripUpdate) -> Option<(Ustr,UpdateData)> {
+    let mut departuretimes: UstrMap<i64> = UstrMap::default();
+    for stoptimeupdate in update.stop_time_update.iter() {
+        let Some((stop_id, departuretime)) =
+            parse_stoptimeupdate(&stoptimeupdate) else {continue;};
+        departuretimes.insert(stop_id, departuretime);
     }
-    return None;
+    let vehicle = update.vehicle.as_ref()?;
+    Some((ustr(update.trip.trip_id.as_ref()?),UpdateData{
+        route_id: ustr(&update.trip.route_id.as_ref()?),
+        direction: update.trip.direction_id? as u8,
+        vehicle_id: ustr(vehicle.id.as_ref()?),
+        label: ustr(vehicle.label.as_ref()?),
+        departure_update: departuretimes,
+        timestamp: update.timestamp? as i64
+    }))
 }
 
 
-fn fetch_tripupdate(endpoint: &str) -> Option<(UstrMap<UpdateData>, i64)> {
+fn fetch_tripupdate(endpoint: &str) -> Option<UstrMap<UpdateData>> {
     let bytes = fetchwithauth(endpoint)?;
     let time = SystemTime::now().duration_since(UNIX_EPOCH).expect("time did not work").as_millis() as i64;
     let feed = FeedMessage::decode(bytes).ok()?;
-    let map: UstrMap<UpdateData> = UstrMap::default();
+    let mut map: UstrMap<UpdateData> = UstrMap::default();
 
     for entity in feed.entity {
         let Some(trip_update) = entity.trip_update else {continue;};
-        if testd(trip_update).is_some() {
-            break;
-        }
+        let Some((trip_id,update)) = parse_tripupdate(&trip_update) else {continue};
+        map.insert(trip_id, update);
     }
-    None
+    Some(map)
+}
+#[derive(Serialize,Debug,Copy,Clone)]
+pub struct Vehicle {
+    vehicleid: Ustr,
+    vehicleLabel: Ustr,
+    tripId: Ustr,
+    routeId: Ustr,
+    routeShortName: Ustr,
+    latitude: f32,
+    longitude: f32,
+    bearing: f32,
+    speed: f32,
+    currentStopId: Ustr,
+    currentStatus: &'static str,
+    timestamp: i64,
+    directionId: u32,
 }
 
+fn parse_vehicleupdate(vu: &VehiclePosition) -> Option<Vehicle> {
+    let (latitude, longitude, speed, bearing)= if let Some(pos) = vu.position {
+        (pos.latitude,
+        pos.longitude,
+        if let Some(be) = pos.bearing {
+            be
+        } else {0.0},
+        if let Some(spe) = pos.speed {
+            spe
+        } else {0.0})
+    } else {(0.0,0.0,0.0,0.0)};
+    let (tripId, routeId, directionId) = if let Some(tripd) = &vu.trip {
+        (ustr(tripd.trip_id()),
+        ustr(tripd.route_id()),
+        tripd.direction_id())
+    } else {(ustr(""),ustr(""),0)};
+    Some(Vehicle{
+        vehicleid: ustr(vu.vehicle.as_ref().and_then(|v| v.id.as_ref())?),
+        vehicleLabel: ustr(vu.vehicle.as_ref().and_then(|v| v.label.as_deref()).unwrap_or("")),
+        tripId,
+        routeId,
+        routeShortName: ustr(""),
+        latitude,
+        longitude,
+        bearing,
+        speed,
+        currentStopId: ustr(vu.stop_id()),
+        currentStatus: vu.current_status().as_str_name(),
+        timestamp: vu.timestamp.unwrap_or(0) as i64,
+        directionId,
+    })
+}
+
+fn fetch_vehicleupdate(endpoint: &str) -> Option<(UstrMap<Vehicle>, i64)> {
+    let bytes = fetchwithauth(endpoint)?;
+    let time = SystemTime::now().duration_since(UNIX_EPOCH).expect("time did not work").as_millis() as i64;
+    let feed = FeedMessage::decode(bytes).ok()?;
+    let mut map: UstrMap<Vehicle> = UstrMap::default();
+
+    for entity in feed.entity {
+        let Some(vehicle_update) = entity.vehicle else {continue;};
+        let Some(vehicle) = parse_vehicleupdate(&vehicle_update) else {continue};
+        map.insert(vehicle.vehicleid, vehicle);
+    }
+    Some((map, time))
+
+}
 
 fn fetch_alerts_as_json(endpoint: &str) -> Option<String> {
     let stop_names_guard = STOP_NAMES.load();
@@ -397,30 +546,137 @@ fn parse_stop_names(stops : &Vec<u8>) -> UstrMap<Ustr> {
     }
     map
 }
+// any parse failures lead to skipping the record
+fn parse_route_record(record: &ByteRecord) -> Option<Route> {
+    let route_id = ustr(std::str::from_utf8(record.get(0)?).ok()?);
+    let route_short_name = ustr(std::str::from_utf8(record.get(2)?).ok()?);
+    let route_long_name = ustr(std::str::from_utf8(record.get(3)?).ok()?);
 
-// if any of the fields fails to parse, we toss the record.
-fn parse_record(record: &ByteRecord) -> Option<(Ustr, StopData)> {
-    let trip_id = ustr(std::str::from_utf8(record.get(0)?).ok()?);
-    let arrival = std::str::from_utf8(record.get(1)?).ok()?;
-    let depart =  std::str::from_utf8(record.get(2)?).ok()?;
-    let stop_id = ustr(std::str::from_utf8(record.get(3)?).ok()?);
-    let stop_seq = std::str::from_utf8(record.get(4)?).ok()?;
+    Some(Route {
+        route_id,
+        route_short_name,
+        route_long_name
+    })
+}
 
-    Some((stop_id,StopData{
-        arrive: NaiveTime::parse_from_str(arrival, "%H:%M:%S").ok()?,
-        depart: NaiveTime::parse_from_str(depart, "%H:%M:%S").ok()?,
-        sequence: stop_seq.parse().ok()?,
-        trip_id
+fn parse_routes(data: &Vec<u8>) -> UstrMap<Route> {
+    let mut routes: UstrMap<Route> = UstrMap::default();
+    let mut rdr = ReaderBuilder::new().has_headers(true).from_reader(data.as_slice());
+    for result in rdr.byte_records() {
+        let Ok(record) = result else {continue};
+        let Some(route) = parse_route_record(&record) else {continue};
+        routes.insert(route.route_id,route);
+    }
+    routes
+}
+
+fn parse_trip_record(record: &ByteRecord) -> Option<(Ustr, Trip)> {
+    let route_id = ustr(std::str::from_utf8(record.get(0)?).ok()?);
+    let service_id = ustr(std::str::from_utf8(record.get(1)?).ok()?);
+    let trip_id = ustr(std::str::from_utf8(record.get(2)?).ok()?);
+    let headsign = ustr(std::str::from_utf8(record.get(3)?).ok()?);
+    let direction = std::str::from_utf8(record.get(4)?).ok()?.parse().ok()?;
+
+    Some((trip_id, Trip {
+        route_id,
+        service_id,
+        headsign,
+        direction,
     }))
 }
 
-fn parse_stoptimes(data: &Vec<u8>, fetched_at: i64) -> (UstrMap<Vec<StopData>>, i64) {
+fn parse_trips(data: &Vec<u8>, calendar: &UstrSet) -> UstrMap<Trip> {
+    let mut trips: UstrMap<Trip> = UstrMap::default();
+    let mut rdr = ReaderBuilder::new().has_headers(true).from_reader(data.as_slice());
+    for result in rdr.byte_records() {
+        let Ok(record) = result else {continue};
+        let Some((trip_id, trip)) = parse_trip_record(&record) else {continue};
+        if !calendar.contains(&trip.service_id) {continue}
+        trips.insert(trip_id, trip);
+    }
+    trips
+}
+
+fn parse_calendar_record(record: &ByteRecord, datestr: &str,weekday: u32) -> Option<Ustr> {
+    let service_id = ustr(std::str::from_utf8(record.get(0)?).ok()?);
+
+    let valid = // weekday check
+        ((std::str::from_utf8(record.get(weekday as usize)?).ok()?) == "1" ) &&
+        // has service started?
+        ((std::str::from_utf8(record.get(8)?).ok()?) < datestr) &&
+        // has it ended?
+        ((std::str::from_utf8(record.get(9)?).ok()?) > datestr);
+
+    if valid {
+        Some(service_id)
+    } else { None }
+
+}
+
+fn parse_calendar_dates_record(record: &ByteRecord, datestr: &str) -> Option<(Ustr,u8)> {
+    let service_id = ustr(std::str::from_utf8(record.get(0)?).ok()?);
+    let record_date = std::str::from_utf8(record.get(2)?).ok()?;
+    let value: u8 = (std::str::from_utf8(record.get(2)?).ok()?).parse::<u8>().ok()?;
+
+    if record_date == datestr {
+        Some((service_id,value))
+    } else { None }
+}
+
+fn parse_calendar(calendartxt: &Vec<u8>, calendar_datestxt: &Vec<u8>) -> UstrSet {
+    let mut calendar = UstrSet::default();
+        //eternal summer time
+    let offset = FixedOffset::east_opt(3*3600).expect("invalid_offset");
+    let localtime= Utc::now().with_timezone(&offset);
+    let formatted_date = localtime.format("%Y%m%d").to_string();
+    let weekday = localtime.weekday().number_from_monday();
+
+    let mut crdr = ReaderBuilder::new().has_headers(true).from_reader(calendartxt.as_slice());
+
+    for result in crdr.byte_records() {
+        let Ok(record) = result else {continue};
+        let Some(service_id) = parse_calendar_record(&record,&formatted_date,weekday) else {continue};
+        calendar.insert(service_id);
+    }
+
+    let mut drdr = ReaderBuilder::new().has_headers(true).from_reader(calendar_datestxt.as_slice());
+
+    for result in drdr.byte_records() {
+        let Ok(record) = result else {continue};
+        let Some((service_id,val)) = parse_calendar_dates_record(&record, &formatted_date) else {continue};
+        if val == 1 {
+            calendar.insert(service_id);
+        }
+        if val == 2 {
+            calendar.remove(&service_id);
+        }
+    }
+    calendar
+}
+
+// if any of the fields fails to parse, we toss the record.
+fn parse_stop_record(record: &ByteRecord, calendar: &UstrSet) -> Option<(Ustr, StopData)> {
+    let trip_id = ustr(std::str::from_utf8(record.get(0)?).ok()?);
+    let depart =  std::str::from_utf8(record.get(2)?).ok()?;
+    let stop_id = ustr(std::str::from_utf8(record.get(3)?).ok()?);
+    let stop_seq = std::str::from_utf8(record.get(4)?).ok()?;
+    let service_id = ustr(std::str::from_utf8(record.get(10)?).ok()?);
+    if !calendar.contains(&service_id) {return None;}
+
+    Some((stop_id,StopData{
+        depart: NaiveTime::parse_from_str(depart, "%H:%M:%S").ok()?,
+        sequence: stop_seq.parse().ok()?,
+        trip_id,
+    }))
+}
+
+fn parse_stoptimes(data: &Vec<u8>, fetched_at: i64,calendar: &UstrSet) -> (UstrMap<Vec<StopData>>, i64) {
     let mut stops: UstrMap<Vec<StopData>> = UstrMap::default();
     let mut rdr = ReaderBuilder::new().has_headers(true).from_reader(data.as_slice());
 
     for result in rdr.byte_records() {
         let Ok(record) = result else { continue };
-        let Some((stop_id, stopdata)) = parse_record(&record) else { continue };
+        let Some((stop_id, stopdata)) = parse_stop_record(&record, calendar) else { continue };
         stops
             .entry(stop_id)
             .or_default()
@@ -454,8 +710,10 @@ fn parse_stops_full(stops : &Vec<u8>, fetched_at: i64) -> UstrMap<String> {
 
             let jsonstops : Value = json!({
                 "fetchedAt": fetched_at,
+                "stop" : {
                 "name": name,
                 // rest of the fields are optional, provided if found
+                "stopId": id,
                 "lat" : bytesref_to_str(record.get(3)),
                 "lon" : bytesref_to_str(record.get(4)),
                 "zone_id" : bytesref_to_str(record.get(5)),
@@ -464,7 +722,7 @@ fn parse_stops_full(stops : &Vec<u8>, fetched_at: i64) -> UstrMap<String> {
                 "wheelchair_boarding" : bytesref_to_str(record.get(12)),
                 "platform_code" : bytesref_to_str(record.get(13)),
                 "vehicle_type" : bytesref_to_str(record.get(14)),
-
+            }
             });
             let json = serde_json::to_string(&jsonstops).expect("failed to serialize data");
             map.insert(ustr(id),json);
@@ -501,6 +759,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Box::new(StaticFetcher::new(STATICDATAENDPOINT )) as Box<dyn FetchTask>,
         Box::new(AlertFetcher::new(SERVICEALERTENDPOINT, Duration::from_secs(61))) as Box<dyn FetchTask>,
         Box::new( TripUpdateFetcher::new(TRIPUPDATEENDPOINT,Duration::from_secs(31))) as Box<dyn FetchTask>,
+        Box::new(VehicleUpdateFetcher::new(VEHICLEUPDATEENDPOINT, Duration::from_secs(5))) as Box<dyn FetchTask>,
 
     ];
 
@@ -584,32 +843,88 @@ fn within_4_h(dep_time:NaiveTime, now: NaiveTime) -> bool {
     let forward_minutes = (diff.num_minutes() + 1440) % 1440;
     forward_minutes <= 240
 }
+// today, unless already in the past and more than 8 hours ago
+fn calculate_timestamp(depart: NaiveTime, localtime: DateTime<FixedOffset>) -> i64 {
+    let mut depart_dt = localtime
+        .date_naive()
+        .and_time(depart)
+        .and_local_timezone(localtime.timezone())
+        .unwrap();
+
+    if localtime.signed_duration_since(depart_dt) > chrono::TimeDelta::hours(8) {
+        depart_dt = depart_dt + chrono::TimeDelta::days(1);
+    }
+    depart_dt.timestamp()
+}
 
 fn departures(_request: &Request, id: String) -> Response{
     let stoptimesguard = STOPTIMES_BY_STOP.load();
+    let tripsguard = TRIPS.load();
+    let routesguard= ROUTES.load();
+    let tripupdateguard = TRIPUPDATES.load();
 
-    match stoptimesguard.as_ref() {
-        Some(arc) => {
-            let (times_by_stop, fetched_at) = &**arc;
-            let Some(stopinfo) = times_by_stop.get(&ustr(&id))
+    match (stoptimesguard.as_ref(),tripsguard.as_ref(),routesguard.as_ref(),tripupdateguard.as_ref()) {
+        (Some(stoparc),Some(triparc),Some(routearc),Some(tuarc)) => {
+            let (times_by_stop, static_fetch) = &**stoparc;
+            let trips = &**triparc;
+            let routes = &**routearc;
+            let tripupdates = &**tuarc;
+            let mut fetched_at : i64 = *static_fetch;
+            let stop_id = ustr(&id);
+
+            let Some(stopinfo) = times_by_stop.get(&stop_id)
                 else { return jsonerror(404,"could not find stop")};
+
                 //eternal summer time
             let offset = FixedOffset::east_opt(3*3600).expect("invalid_offset");
-            let localtime : NaiveTime = Utc::now().with_timezone(&offset).time();
-            let departures : Vec<&StopData> =
-                departures_later_than(stopinfo,localtime)
+            let localtime= Utc::now().with_timezone(&offset);
+            let localnaivetime : NaiveTime = localtime.time();
+            let departures : Vec<JoinedStopData> =
+                departures_later_than(stopinfo,localnaivetime)
                     .into_iter()
                     .take(20)
-                    .take_while(|stop| within_4_h(stop.depart, localtime))
-                    .collect();
+                    .take_while(|stop| within_4_h(stop.depart, localnaivetime))
+                    .map(|stop| {
+                        let trip = trips.get(&stop.trip_id);
+                        let route = trip.and_then(|t| routes.get(&t.route_id));
+                        let scheduledDeparture: i64 = calculate_timestamp(stop.depart, localtime);
+                        let tripupdate = tripupdates.get (&stop.trip_id);
+
+                        let mut realtimeDeparture: i64 = scheduledDeparture;
+                        let mut hasRealtime: bool = false;
+                        let mut delaySeconds: i64 = 0;
+                        if let Some(update) = tripupdate {
+                            let timestamp: i64 = update.timestamp;
+                            if let Some(updated_departure) = update.departure_update.get(&stop_id) {
+                                fetched_at = fetched_at.max(timestamp);
+                                realtimeDeparture = *updated_departure;
+                                delaySeconds = realtimeDeparture-scheduledDeparture;
+                                hasRealtime = true;
+                            }
+                        }
+
+
+                        JoinedStopData {
+                            stop,
+                            scheduledDeparture,
+                            delaySeconds,
+                            hasRealtime,
+                            realtimeDeparture,
+                            status: if delaySeconds == 0 {"ON_TIME"} else {"DELAYED"},
+                            trip,
+                            route
+
+                        }
+                    }).collect();
 
             let jsondepartures : Value = json!({
                 "fetchedAt": fetched_at,
+                "stopId": id,
                 "departures" : departures
                 });
             Response::text(jsondepartures.to_string())
         }
-        None => jsonerror(500,"static data load failure")
+        _ => jsonerror(500,"static data load failure"),
     }
 
 }
@@ -623,6 +938,20 @@ fn alerts(_request: &Request) -> Response{
 
 }
 fn vehicles(_request: &Request) -> Response{
-    Response::text("vehicles")
+    let vehiclesguard = VEHICLES.load();
+
+    match (&*vehiclesguard).as_ref() {
+        Some(arctuple) => {
+            let (map, timestamp) = &**arctuple;
+            let vehvec: Vec<&Vehicle> = map.values().collect();
+            let json = json!({
+                "fetchedAt": timestamp,
+                "vehicles" : vehvec
+            });
+
+            Response::text(json.to_string())
+        },
+        None => jsonerror(500,"data load failure")
+    }
 }
 
