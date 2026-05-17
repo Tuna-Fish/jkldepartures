@@ -939,11 +939,17 @@ fn alerts(_request: &Request) -> Response{
 }
 fn vehicles(_request: &Request) -> Response{
     let vehiclesguard = VEHICLES.load();
+    let routesguard = ROUTES.load();
 
-    match (&*vehiclesguard).as_ref() {
-        Some(arctuple) => {
+    match ((&*vehiclesguard).as_ref(),(&*routesguard).as_ref()) {
+        (Some(arctuple),Some(routearc)) => {
             let (map, timestamp) = &**arctuple;
-            let vehvec: Vec<&Vehicle> = map.values().collect();
+            let route = &**routearc;
+            let vehvec: Vec<Vehicle> = map.values().map(|v|
+                Vehicle {
+                    routeShortName: route.get(&v.routeId).map(|r| r.route_short_name).unwrap_or(ustr("")),
+                    ..v.clone()
+                }).collect();
             let json = json!({
                 "fetchedAt": timestamp,
                 "vehicles" : vehvec
@@ -951,7 +957,7 @@ fn vehicles(_request: &Request) -> Response{
 
             Response::text(json.to_string())
         },
-        None => jsonerror(500,"data load failure")
+        _ => jsonerror(500,"data load failure")
     }
 }
 
