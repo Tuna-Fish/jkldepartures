@@ -15,6 +15,34 @@ export interface FreshData<T> {
   isStale: boolean    // true if older than the feed's max age
 }
 
+// ── Stops ───────────────────────────────────────────────────────────────────
+
+export interface Stop {
+  id: string
+  name: string
+}
+
+export interface StopMetadata extends Stop {
+  latitude?: number
+  longitude?: number
+  locationType?: string
+  municipalityId?: string
+  platformCode?: string
+  vehicleType?: string
+  wheelchairBoarding?: string
+  zoneId?: string
+}
+
+export interface StopsResult {
+  stops: Stop[]
+  fetchedAt: number
+}
+
+export interface StopMetadataResult {
+  stop: StopMetadata
+  fetchedAt: number
+}
+
 // ── Service Alerts ───────────────────────────────────────────────────────────
 
 export type AlertSeverity = 'INFO' | 'WARNING' | 'SEVERE' | 'UNKNOWN'
@@ -69,9 +97,11 @@ export interface VehiclePosition {
   vehicleLabel?: string   // headsign
   tripId?: string
   routeId?: string
+  routeShortName?: string
   latitude: number
   longitude: number
   bearing?: number        // degrees, 0 = north
+  travelBearing?: number  // calculated from previous and current position
   speed?: number          // m/s
   currentStopId?: string
   currentStatus: VehicleStopStatus
@@ -87,6 +117,8 @@ export type DepartureStatus = 'ON_TIME' | 'DELAYED' | 'EARLY' | 'CANCELLED' | 'N
 export interface Departure {
   tripId: string
   routeId: string
+  routeShortName?: string
+  routeLongName?: string
   headsign: string          // e.g. "Keskusta" or "Mattilanniemi"
   scheduledDeparture: number  // Unix seconds
   realtimeDeparture: number   // Unix seconds (same as scheduled if no realtime)
@@ -95,6 +127,11 @@ export interface Departure {
   hasRealtime: boolean
   vehicleId?: string
   platform?: string
+}
+
+export interface DeparturesResult {
+  departures: Departure[]
+  fetchedAt: number
 }
 
 // ── Raw feed response wrappers ────────────────────────────────────────────────
@@ -111,6 +148,11 @@ export interface RawAlertResult {
 }
 
 export interface RawVehicleResult {
+  vehicles: VehiclePosition[]
+  fetchedAt: number
+}
+
+export interface VehiclesResult {
   vehicles: VehiclePosition[]
   fetchedAt: number
 }

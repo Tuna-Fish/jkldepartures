@@ -1,5 +1,7 @@
 // src/layouts/AppLayout.tsx
 import { useLocation, useNavigate } from 'react-router-dom'
+import type { ServiceAlert } from '../api/types'
+import { useAlerts } from '../hooks/useAlerts'
 
 const navItems = [
   {
@@ -16,7 +18,7 @@ const navItems = [
   },
   {
     id: 'departures',
-    path: '/stop/search',
+    path: '/stop',
     label: 'Departures',
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -45,7 +47,6 @@ const navItems = [
     id: 'alerts',
     path: '/alerts',
     label: 'Alerts',
-    badge: 2,
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
         strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
@@ -60,9 +61,24 @@ interface AppLayoutProps {
   children: React.ReactNode
 }
 
+function isResolved(alert: ServiceAlert): boolean {
+  if (alert.activePeriods.length === 0) return false
+
+  const nowSec = Date.now() / 1000
+  return alert.activePeriods.every(p => p.end !== undefined && p.end < nowSec)
+}
+
+function formatBadgeCount(count: number): string | undefined {
+  if (count === 0) return undefined
+  return count > 9 ? '9+' : String(count)
+}
+
 export default function AppLayout({ children }: AppLayoutProps) {
   const location = useLocation()
   const navigate = useNavigate()
+  const { data: alertsData } = useAlerts()
+  const activeAlertsCount = (alertsData?.alerts ?? []).filter(alert => !isResolved(alert)).length
+  const alertsBadge = formatBadgeCount(activeAlertsCount)
 
   const isActive = (path: string) => {
     if (path === '/') return location.pathname === '/'
@@ -84,6 +100,7 @@ export default function AppLayout({ children }: AppLayoutProps) {
       <nav className="fixed bottom-0 left-0 right-0 bg-surface-raised border-t border-surface-border flex z-50">
         {navItems.map((item) => {
           const active = isActive(item.path)
+          const badge = item.id === 'alerts' ? alertsBadge : undefined
           return (
             <button
               key={item.id}
@@ -96,10 +113,10 @@ export default function AppLayout({ children }: AppLayoutProps) {
             >
               <div className="w-5 h-5 relative">
                 {item.icon}
-                {item.badge && (
+                {badge && (
                   <span className="absolute -top-1 -right-1.5 bg-accent text-white
                     text-[9px] font-bold font-display px-1 rounded-full leading-tight">
-                    {item.badge}
+                    {badge}
                   </span>
                 )}
               </div>

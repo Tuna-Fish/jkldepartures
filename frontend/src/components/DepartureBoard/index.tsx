@@ -54,6 +54,15 @@ function StatusPill({ status, delaySeconds }: {
       </span>
     )
   }
+  if (status === 'EARLY') {
+    const mins = Math.abs(Math.round(delaySeconds / 60))
+    return (
+      <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded
+        bg-[#102a3a] text-[#38bdf8] tracking-wide">
+        -{mins} min
+      </span>
+    )
+  }
   return (
     <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded
       bg-[#1a3a1a] text-[#4ade80] tracking-wide">
@@ -108,7 +117,8 @@ function CountdownDisplay({ dep }: { dep: Departure }) {
 }
 
 function DepartureCard({ dep }: { dep: Departure }) {
-  const colour = routeColour(dep.routeId)
+  const routeLabel = dep.routeShortName ?? dep.routeId
+  const colour = routeColour(routeLabel)
   const isCancelled = dep.status === 'CANCELLED'
 
   return (
@@ -124,7 +134,7 @@ function DepartureCard({ dep }: { dep: Departure }) {
           text-[15px] font-bold font-display flex-shrink-0 min-h-[44px]"
         style={{ backgroundColor: colour.bg, color: colour.text }}
       >
-        {dep.routeId}
+        {routeLabel}
       </div>
 
       {/* Info */}

@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 // src/hooks/useDepartures.ts
 import { useQuery } from '@tanstack/react-query'
 import { useMemo } from 'react'
@@ -49,3 +50,17 @@ export function useDepartures(stopId: string): UseDeparturesResult {
     refetch:    query.refetch,
   }
 }
+=======
+import { useQuery } from '@tanstack/react-query'
+import { fetchDepartures } from '../services/departures'
+
+export function useDepartures(stopId: string) {
+  return useQuery({
+    queryKey: ['stops', stopId, 'departures'],
+    queryFn: () => fetchDepartures(stopId),
+    enabled: stopId.length > 0,
+    staleTime: 30_000,
+    refetchInterval: 30_000,
+  })
+}
+>>>>>>> f3cdb8957380b8e9565d0c9307d4486b8468899a
