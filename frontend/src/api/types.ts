@@ -115,6 +115,8 @@ export type DepartureStatus = 'ON_TIME' | 'DELAYED' | 'EARLY' | 'CANCELLED' | 'N
 export interface Departure {
   tripId: string
   routeId: string
+  routeShortName?: string
+  routeLongName?: string
   headsign: string          // e.g. "Keskusta" or "Mattilanniemi"
   scheduledDeparture: number  // Unix seconds
   realtimeDeparture: number   // Unix seconds (same as scheduled if no realtime)
@@ -123,6 +125,11 @@ export interface Departure {
   hasRealtime: boolean
   vehicleId?: string
   platform?: string
+}
+
+export interface DeparturesResult {
+  departures: Departure[]
+  fetchedAt: number
 }
 
 // ── Raw feed response wrappers ────────────────────────────────────────────────
