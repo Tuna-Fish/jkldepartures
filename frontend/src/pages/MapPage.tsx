@@ -3,15 +3,9 @@ import { MapContainer, TileLayer, Marker, Popup, Circle, useMapEvents } from 're
 import { useEffect, useMemo, useState } from 'react'
 import L from 'leaflet'
 import FreshnessIndicator from '../components/FreshnessIndicator'
-<<<<<<< HEAD
-import { useVehiclePositions } from '../hooks/useVehiclePositions'
-import { vehicleStatusLabel } from '../services/vehicles'
-import type { VehiclePosition } from '../api/types'
-=======
 import type { StopMetadata, VehiclePosition } from '../api/types'
 import { useStopMarkers } from '../hooks/useStops'
 import { useVehicles } from '../hooks/useVehicles'
->>>>>>> f3cdb8957380b8e9565d0c9307d4486b8468899a
 
 // Fix Leaflet's broken default icon paths when bundled with Vite
 delete (L.Icon.Default.prototype as unknown as Record<string, unknown>)._getIconUrl
@@ -30,17 +24,6 @@ const ROUTE_COLOURS: Record<string, string> = {
   '9': '#00695C', '12': '#2E7D32', '25': '#6A1B9A',
 }
 
-<<<<<<< HEAD
-const MOCK_STOPS = [
-  { id: '1111', name: 'Keskusta (M)', lat: 62.2415, lng: 25.7482 },
-  { id: '3041', name: 'Yliopisto',    lat: 62.2320, lng: 25.7598 },
-  { id: '1084', name: 'Hämeenkatu',  lat: 62.2501, lng: 25.7308 },
-]
-
-// ── Icon factories ────────────────────────────────────────────────────────────
-
-function vehicleIcon(routeId: string) {
-=======
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max)
 }
@@ -50,7 +33,6 @@ function markerZoomScale(zoom: number): number {
 }
 
 function vehicleIcon(routeId: string, bearing?: number, zoom = 14) {
->>>>>>> f3cdb8957380b8e9565d0c9307d4486b8468899a
   const colour = ROUTE_COLOURS[routeId] ?? '#2979FF'
   const scale = markerZoomScale(zoom)
   const circleRadius = 9 * scale
@@ -113,8 +95,6 @@ function stopIcon() {
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
-<<<<<<< HEAD
-=======
 function routeLabel(v: VehiclePosition): string {
   return v.routeShortName || v.routeId || '?'
 }
@@ -127,7 +107,7 @@ function speedKmh(speed: number | undefined): number {
   return Math.round(metresPerSecond * 3.6)
 }
 
-function statusLabel(v: VehiclePosition): string {
+function vehicleStatusLabel(v: VehiclePosition): string {
   const age = Math.floor(Date.now() / 1000) - v.timestamp
   const ageStr = age < 60 ? `${age}s ago` : `${Math.floor(age / 60)}m ago`
   if (v.currentStatus === 'STOPPED_AT') return `At stop · ${ageStr}`
@@ -135,7 +115,6 @@ function statusLabel(v: VehiclePosition): string {
   return `${kmh} km/h · ${ageStr}`
 }
 
->>>>>>> f3cdb8957380b8e9565d0c9307d4486b8468899a
 function VehicleListRow({ v }: { v: VehiclePosition }) {
   const label = routeLabel(v)
   const colour = ROUTE_COLOURS[label] ?? '#2979FF'
@@ -191,18 +170,16 @@ function ZoomTracker({ onZoomChange }: { onZoomChange: (zoom: number) => void })
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function MapPage() {
-<<<<<<< HEAD
-  const { vehicles, nearCoordinate, isLoading, fetchedAt } =
-    useVehiclePositions()
-
-  const nearbyVehicles = nearCoordinate(JKL_CENTRE[0], JKL_CENTRE[1])
-=======
   const [mapZoom, setMapZoom] = useState(14)
   const {
     data: vehiclesData,
     isLoading: isVehiclesLoading,
     isError: isVehiclesError,
-  } = useVehicles()
+  } = useVehicles() as {
+    data?: { vehicles?: VehiclePosition[]; fetchedAt?: number }
+    isLoading: boolean
+    isError: boolean
+  }
   const vehicles = useMemo(() => vehiclesData?.vehicles ?? [], [vehiclesData?.vehicles])
   const stopIds = useMemo(() => (
     Array.from(new Set(
@@ -216,7 +193,6 @@ export default function MapPage() {
     .map(query => query.data?.stop)
     .filter((stop): stop is StopMetadata => stop !== undefined)
     .filter(hasStopCoordinates)
->>>>>>> f3cdb8957380b8e9565d0c9307d4486b8468899a
 
   // Suppress SSR warning from react-leaflet
   useEffect(() => {}, [])
@@ -265,17 +241,12 @@ export default function MapPage() {
               </Marker>
             ))}
 
-<<<<<<< HEAD
-            {/* Vehicle markers — from live hook, falls back to empty when loading */}
-            {vehicles.map(v => (
-=======
             {/* Vehicle markers */}
             {vehicles.map(v => {
               const label = routeLabel(v)
               const colour = ROUTE_COLOURS[label] ?? '#2979FF'
 
               return (
->>>>>>> f3cdb8957380b8e9565d0c9307d4486b8468899a
               <Marker
                 key={v.vehicleId}
                 position={[v.latitude, v.longitude]}
@@ -283,15 +254,10 @@ export default function MapPage() {
               >
                 <Popup>
                   <div style={{ fontFamily: 'DM Sans, sans-serif', fontSize: 13 }}>
-<<<<<<< HEAD
-                    <strong>Route {v.routeId}</strong>
-                    {v.vehicleLabel && <> → {v.vehicleLabel}</>}
-=======
                     <strong>Route {label}</strong>
                     {v.vehicleLabel && (
                       <> → {v.vehicleLabel}</>
                     )}
->>>>>>> f3cdb8957380b8e9565d0c9307d4486b8468899a
                     <br />
                     <span style={{ color: '#64748b' }}>{vehicleStatusLabel(v)}</span>
                   </div>
@@ -319,40 +285,6 @@ export default function MapPage() {
         <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-widest">
           Nearby vehicles
         </p>
-<<<<<<< HEAD
-
-        {isLoading && (
-          <div className="flex flex-col gap-2.5">
-            {Array.from({ length: 3 }).map((_, i) => (
-              <div key={i} className="bg-surface-raised border border-surface-border
-                rounded-xl px-3.5 py-3 flex items-center gap-3 animate-pulse">
-                <div className="w-9 h-9 rounded-lg bg-surface-overlay flex-shrink-0" />
-                <div className="flex-1 flex flex-col gap-2">
-                  <div className="h-3 bg-surface-overlay rounded w-2/3" />
-                  <div className="h-2.5 bg-surface-overlay rounded w-1/3" />
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {!isLoading && nearbyVehicles.length === 0 && (
-          <div className="bg-surface-raised border border-surface-border
-            rounded-xl px-4 py-6 flex flex-col items-center gap-2 text-center">
-            <p className="text-[13px] text-slate-500">
-              No vehicles nearby right now
-            </p>
-          </div>
-        )}
-
-        {!isLoading && nearbyVehicles.length > 0 && (
-          <div className="flex flex-col gap-2.5">
-            {nearbyVehicles.map(v => (
-              <VehicleListRow key={v.vehicleId} v={v} />
-            ))}
-          </div>
-        )}
-=======
         <div className="flex flex-col gap-2.5">
           {isVehiclesLoading ? (
             <p className="text-[13px] text-slate-500 py-4 text-center">
@@ -370,7 +302,6 @@ export default function MapPage() {
             <VehicleListRow key={v.vehicleId} v={v} />
           ))}
         </div>
->>>>>>> f3cdb8957380b8e9565d0c9307d4486b8468899a
       </div>
     </div>
   )

@@ -1,6 +1,14 @@
-import type { Departure, DepartureStatus, DeparturesResult } from '../api/types'
+// src/api/departures.ts
+// ─────────────────────────────────────────────────────────────────────────────
+// Fetches departure data from the Rust backend.
+// The backend handles all GTFS protobuf decoding and static data joining.
+// ─────────────────────────────────────────────────────────────────────────────
 
-const STOPS_URL = 'http://tunamasiina.freeddns.org:8081/api/stops'
+import type { Departure, DepartureStatus, DeparturesResult } from './types'
+
+const BASE_URL = 'http://tunamasiina.freeddns.org:8081'
+
+// ── Raw backend shape ─────────────────────────────────────────────────────────
 
 interface BackendDeparture {
   arrive?: string
@@ -30,6 +38,8 @@ type DeparturesResponse = BackendDeparture[] | {
   fetchedAt?: number
 }
 
+// ── Parsing helpers ───────────────────────────────────────────────────────────
+
 function getDeparturesFromResponse(data: DeparturesResponse): BackendDeparture[] {
   if (Array.isArray(data)) return data
   if (Array.isArray(data.departures)) return data.departures
@@ -39,10 +49,8 @@ function getDeparturesFromResponse(data: DeparturesResponse): BackendDeparture[]
 
 function parseGtfsTime(time: string | undefined, fetchedAt: number): number | null {
   if (!time) return null
-
   const parts = time.split(':').map(Number)
   if (parts.length !== 3 || parts.some(part => !Number.isFinite(part))) return null
-
   const [hours, minutes, seconds] = parts
   const fetchedDate = new Date(fetchedAt)
   const departureDate = new Date(
@@ -53,42 +61,30 @@ function parseGtfsTime(time: string | undefined, fetchedAt: number): number | nu
     minutes,
     seconds,
   )
-
   if (departureDate.getTime() + 12 * 60 * 60_000 < fetchedAt) {
     departureDate.setDate(departureDate.getDate() + 1)
   }
-
   return Math.floor(departureDate.getTime() / 1000)
 }
 
 function routeIdFromTripId(tripId: string): string {
   const parts = tripId.split('_')
   const routeCandidate = parts.find(part => /^\d{2,5}$/.test(part))
-
   if (!routeCandidate) return '?'
   return routeCandidate.replace(/0+$/, '') || routeCandidate
 }
 
 function toNumber(value: string | number | undefined): number | undefined {
   if (value === undefined || value === '') return undefined
-
   const parsed = Number(value)
   return Number.isFinite(parsed) ? parsed : undefined
 }
 
 function toDepartureStatus(value: string | undefined, delaySeconds: number): DepartureStatus {
   if (value === 'CANCELLED' || value === 'NO_DATA') return value
-  if (delaySeconds > 0) return 'DELAYED'
-  if (delaySeconds < 0) return 'EARLY'
-
-  if (
-    value === 'ON_TIME' ||
-    value === 'DELAYED' ||
-    value === 'EARLY'
-  ) {
-    return value
-  }
-
+  if (delaySeconds > 60)  return 'DELAYED'
+  if (delaySeconds < -60) return 'EARLY'
+  if (value === 'ON_TIME' || value === 'DELAYED' || value === 'EARLY') return value
   return 'ON_TIME'
 }
 
@@ -102,8 +98,9 @@ function toDeparture(departure: BackendDeparture, fetchedAt: number): Departure 
   const routeId = departure.route_id === undefined
     ? routeIdFromTripId(tripId)
     : String(departure.route_id)
+
   const routeShortName = departure.route_short_name ?? departure.routeShortName
-  const routeLongName = departure.route_long_name ?? departure.routeLongName
+  const routeLongName  = departure.route_long_name  ?? departure.routeLongName
   const realtimeDeparture = toNumber(departure.realtimeDeparture) ?? scheduledDeparture
   const delaySeconds = toNumber(departure.delaySeconds) ?? realtimeDeparture - scheduledDeparture
 
@@ -124,24 +121,26 @@ function toDeparture(departure: BackendDeparture, fetchedAt: number): Departure 
   }
 }
 
+// ── Public fetch function ─────────────────────────────────────────────────────
+
 export async function fetchDepartures(stopId: string): Promise<DeparturesResult> {
-  const response = await fetch(`${STOPS_URL}/${encodeURIComponent(stopId)}/departures`, {
-    headers: {
-      Accept: 'application/json',
-    },
-  })
+    console.log('[departures] fetching for stopId:', stopId, typeof stopId)
+  const response = await fetch(
+    `${BASE_URL}/api/stops/${encodeURIComponent(stopId)}/departures`,
+    { headers: { Accept: 'application/json' } }
+  )
 
   if (!response.ok) {
     throw new Error(`Departures fetch failed: ${response.status} ${response.statusText}`)
   }
 
   const data = await response.json() as DeparturesResponse
-  const fetchedAt = Array.isArray(data) ? Date.now() : data.fetchedAt ?? Date.now()
+  const fetchedAt = Array.isArray(data) ? Date.now() : (data.fetchedAt ?? Date.now())
 
   return {
     departures: getDeparturesFromResponse(data)
-      .map(departure => toDeparture(departure, fetchedAt))
-      .filter((departure): departure is Departure => departure !== null),
+      .map(d => toDeparture(d, fetchedAt))
+      .filter((d): d is Departure => d !== null),
     fetchedAt,
   }
 }

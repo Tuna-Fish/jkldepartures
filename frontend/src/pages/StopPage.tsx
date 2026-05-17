@@ -3,31 +3,10 @@ import { useParams, useNavigate } from 'react-router-dom'
 import DepartureBoard from '../components/DepartureBoard'
 import AlertBanner from '../components/AlertBanner'
 import FreshnessIndicator from '../components/FreshnessIndicator'
-<<<<<<< HEAD
-import { useDepartures } from '../hooks/useDepartures'
-import { useAlerts } from '../hooks/useAlerts'
-
-// ── Stop metadata ─────────────────────────────────────────────────────────────
-// Replace with real static GTFS lookup when backend is ready
-
-const STOP_META: Record<string, { name: string; subtitle: string }> = {
-  '1111': { name: 'Keskusta (M)',  subtitle: 'Kauppakatu, platform A' },
-  '2203': { name: 'Mattilanniemi', subtitle: 'Mattilanniemenkatu' },
-  '3041': { name: 'Yliopisto',     subtitle: 'Seminaarinkatu' },
-  '1084': { name: 'Hämeenkatu',    subtitle: 'Hämeenkatu' },
-  '4012': { name: 'Keljonkangas',  subtitle: 'Keljonkaari' },
-  '2110': { name: 'Tourula',       subtitle: 'Tourulankatu' },
-  '5001': { name: 'Matkakeskus',   subtitle: 'Asemakatu' },
-  '5102': { name: 'Kuokkala',      subtitle: 'Kuokkalantie' },
-  '6201': { name: 'Seppälä',       subtitle: 'Seppälänkatu' },
-  '6340': { name: 'Tikkakoski',    subtitle: 'Tikkakoskentie' },
-}
-=======
 import type { AlertSeverity, ServiceAlert } from '../api/types'
 import { useAlerts } from '../hooks/useAlerts'
 import { useDepartures } from '../hooks/useDepartures'
 import { useStop } from '../hooks/useStops'
->>>>>>> f3cdb8957380b8e9565d0c9307d4486b8468899a
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
@@ -67,42 +46,26 @@ function alertTitle(alert: ServiceAlert): string {
 
 export default function StopPage() {
   const { stopId = '' } = useParams()
+  console.log('[StopPage] stopId from params:', stopId)
   const navigate = useNavigate()
-  const {
-    data: stopData,
-    isLoading: isStopLoading,
-    isError: isStopError,
-  } = useStop(stopId)
+  const stopQuery = useStop(stopId)
+  const stopData = stopQuery.data
+  const { isLoading: isStopLoading, isError: isStopError } = stopQuery
   const { data: alertsData } = useAlerts()
-  const {
-    data: departuresData,
-    isLoading,
-    isError,
-  } = useDepartures(stopId)
+  const departuresQuery = useDepartures(stopId)
+  const departures = departuresQuery.data?.departures ?? []
+  const departuresFetchedAt = departuresQuery.data?.fetchedAt
+  const { isLoading, isError } = departuresQuery
 
-<<<<<<< HEAD
-  const { departures, isLoading, isError, fetchedAt, isStale } =
-    useDepartures(stopId)
-
-  const { alertsForStop } = useAlerts()
-  const stopAlerts = alertsForStop(stopId)
-
-  const meta = STOP_META[stopId] ?? {
-    name: `Stop ${stopId}`,
-    subtitle: '',
-  }
-=======
   const stop = stopData?.stop
-  const departures = departuresData?.departures ?? []
   const stopAlerts = (alertsData?.alerts ?? [])
     .filter(alert => !isResolved(alert) && isAlertForStop(alert, stopId))
   const stopName = stop?.name ?? (isStopLoading ? 'Loading stop…' : `Stop ${stopId}`)
-  const fetchedAt = departuresData?.fetchedAt ?? stopData?.fetchedAt ?? null
+  const fetchedAt = departuresFetchedAt ?? stopData?.fetchedAt ?? null
   const coordinates = stop?.latitude !== undefined && stop.longitude !== undefined
     ? `${stop.latitude.toFixed(5)}, ${stop.longitude.toFixed(5)}`
     : undefined
   const accessibility = wheelchairLabel(stop?.wheelchairBoarding)
->>>>>>> f3cdb8957380b8e9565d0c9307d4486b8468899a
 
   return (
     <div className="flex flex-col">
@@ -125,7 +88,7 @@ export default function StopPage() {
         <p className="flex-1 text-[15px] font-semibold text-slate-100 truncate">
           {stopName}
         </p>
-        <FreshnessIndicator fetchedAt={fetchedAt} staleAfterMs={isStale ? 0 : 45_000} />
+        <FreshnessIndicator fetchedAt={fetchedAt} staleAfterMs={45_000} />
       </div>
 
       {/* Content */}
@@ -181,22 +144,12 @@ export default function StopPage() {
           )}
         </div>
 
-<<<<<<< HEAD
-        {/* Contextual alerts for this stop */}
-        {stopAlerts.map(alert => (
-          <AlertBanner
-            key={alert.id}
-            level={alert.severity.toLowerCase() as 'info' | 'warning' | 'severe'}
-            title={alert.headerText}
-            description={alert.descriptionText}
-=======
         {stopAlerts.map(alert => (
           <AlertBanner
             key={alert.id}
             level={alertLevel(alert.severity)}
             title={alertTitle(alert)}
             description={alert.descriptionText || alert.effect.replaceAll('_', ' ')}
->>>>>>> f3cdb8957380b8e9565d0c9307d4486b8468899a
           />
         ))}
 

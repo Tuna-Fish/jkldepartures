@@ -18,7 +18,7 @@ const navItems = [
   },
   {
     id: 'departures',
-    path: '/stop',
+    path: '/stop/search',
     label: 'Departures',
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"

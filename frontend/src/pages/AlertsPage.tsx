@@ -125,7 +125,8 @@ function AlertCard({ alert }: { alert: ServiceAlert }) {
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function AlertsPage() {
-  const { data: alerts, isLoading, isError, dataUpdatedAt: fetchedAt } = useAlerts()
+  const { data: alerts, isLoading, isError } = useAlerts()
+  const fetchedAt = null
   const safeAlerts = alerts?.alerts ?? []
 
   const active   = safeAlerts.filter((a: ServiceAlert) => !isResolved(a))

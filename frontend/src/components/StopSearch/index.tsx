@@ -1,32 +1,8 @@
 // src/components/StopSearch/index.tsx
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-<<<<<<< HEAD
-
-export interface StopResult {
-  id: string
-  name: string
-  routes: string
-}
-
-// Placeholder data — replaced with real stops from GET /api/stops
-// when the backend is connected in Step 4
-const MOCK_STOPS: StopResult[] = [
-  { id: '1111', name: 'Keskusta (M)',   routes: 'Routes 1, 4, 7, 12, 25' },
-  { id: '2203', name: 'Mattilanniemi',  routes: 'Routes 12, 25' },
-  { id: '3041', name: 'Yliopisto',      routes: 'Routes 7, 8, 9' },
-  { id: '1084', name: 'Hämeenkatu',     routes: 'Routes 1, 3, 6' },
-  { id: '4012', name: 'Keljonkangas',   routes: 'Routes 12, 15' },
-  { id: '2110', name: 'Tourula',        routes: 'Routes 25, 26' },
-  { id: '5001', name: 'Matkakeskus',    routes: 'Routes 1, 3, 4, 6, 7' },
-  { id: '5102', name: 'Kuokkala',       routes: 'Routes 7, 8' },
-  { id: '6201', name: 'Seppälä',        routes: 'Routes 25, 26' },
-  { id: '6340', name: 'Tikkakoski',     routes: 'Routes 9' },
-]
-=======
 import { useStops } from '../../hooks/useStops'
 import type { Stop } from '../../api/types'
->>>>>>> f3cdb8957380b8e9565d0c9307d4486b8468899a
 
 const SearchIcon = () => (
   <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
@@ -63,29 +39,17 @@ export default function StopSearch({
   const navigate = useNavigate()
   const { data, isLoading, isError } = useStops()
 
-<<<<<<< HEAD
-  const isSearching = query.trim().length > 0
-
-  const filtered = isSearching
-    ? MOCK_STOPS.filter(s =>
-        s.name.toLowerCase().includes(query.toLowerCase()) ||
-        s.id.includes(query.trim())
-      )
-    : MOCK_STOPS.slice(0, recentCount)
-
-  const handleSelect = (stop: StopResult) => {
-=======
   const stops = data?.stops ?? []
   const normalizedQuery = query.trim().toLowerCase()
-  const filtered = normalizedQuery.length > 0
+  const isSearching = normalizedQuery.length > 0
+  const filtered = isSearching
     ? stops.filter(s =>
         s.name.toLowerCase().includes(normalizedQuery) ||
         s.id.includes(normalizedQuery)
       )
-    : stops.slice(0, 4)
+    : stops.slice(0, recentCount)
 
   const handleSelect = (stop: Stop) => {
->>>>>>> f3cdb8957380b8e9565d0c9307d4486b8468899a
     navigate(`/stop/${stop.id}`)
   }
 
@@ -138,24 +102,6 @@ export default function StopSearch({
 
       {/* Stop list */}
       <div className="flex flex-col gap-2">
-<<<<<<< HEAD
-        {filtered.length === 0 ? (
-          <div className="bg-surface-raised border border-surface-border
-            rounded-xl px-4 py-8 flex flex-col items-center gap-2 text-center">
-            <svg width="28" height="28" viewBox="0 0 24 24" fill="none"
-              stroke="#64748b" strokeWidth={1.5}
-              strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="11" cy="11" r="7" />
-              <path d="m21 21-4.35-4.35" />
-            </svg>
-            <p className="text-[14px] font-semibold text-slate-400">
-              No stops found
-            </p>
-            <p className="text-[12px] text-slate-500">
-              Try a different name or stop number
-            </p>
-          </div>
-=======
         {isLoading ? (
           <p className="text-[13px] text-slate-500 py-4 text-center">
             Loading stops…
@@ -168,7 +114,6 @@ export default function StopSearch({
           <p className="text-[13px] text-slate-500 py-4 text-center">
             No stops found for "{query}"
           </p>
->>>>>>> f3cdb8957380b8e9565d0c9307d4486b8468899a
         ) : (
           filtered.map(stop => (
             <button
