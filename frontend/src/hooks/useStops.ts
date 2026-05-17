@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query'
+import { useQueries, useQuery } from '@tanstack/react-query'
 import { fetchStop, fetchStops } from '../services/stops'
 
 export function useStops() {
@@ -17,5 +17,17 @@ export function useStop(stopId: string) {
     enabled: stopId.length > 0,
     staleTime: 10 * 60_000,
     refetchInterval: 10 * 60_000,
+  })
+}
+
+export function useStopMarkers(stopIds: string[]) {
+  return useQueries({
+    queries: stopIds.map(stopId => ({
+      queryKey: ['stops', stopId],
+      queryFn: () => fetchStop(stopId),
+      enabled: stopId.length > 0,
+      staleTime: 10 * 60_000,
+      refetchInterval: 10 * 60_000,
+    })),
   })
 }

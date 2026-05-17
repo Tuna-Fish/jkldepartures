@@ -97,9 +97,11 @@ export interface VehiclePosition {
   vehicleLabel?: string   // headsign
   tripId?: string
   routeId?: string
+  routeShortName?: string
   latitude: number
   longitude: number
   bearing?: number        // degrees, 0 = north
+  travelBearing?: number  // calculated from previous and current position
   speed?: number          // m/s
   currentStopId?: string
   currentStatus: VehicleStopStatus
@@ -146,6 +148,11 @@ export interface RawAlertResult {
 }
 
 export interface RawVehicleResult {
+  vehicles: VehiclePosition[]
+  fetchedAt: number
+}
+
+export interface VehiclesResult {
   vehicles: VehiclePosition[]
   fetchedAt: number
 }
