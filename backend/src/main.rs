@@ -1,3 +1,5 @@
+extern crate gtfs_realtime;
+
 use rouille::Request;
 use rouille::Response;
 use rouille::router;
@@ -11,6 +13,7 @@ use reqwest::header::{HeaderValue, AUTHORIZATION};
 use bytes::Bytes;
 use gtfs_realtime::{FeedMessage, TripUpdate, VehiclePosition};
 use gtfs_realtime::trip_update::StopTimeUpdate;
+use gtfs_realtime::trip_descriptor::ScheduleRelationship;
 use prost::Message;
 use zip;
 use std::error::Error;
@@ -96,6 +99,7 @@ pub struct UpdateData {
     label: Ustr,
     departure_update: UstrMap<i64>,
     timestamp: i64,
+    schedulerelationship: ScheduleRelationship
 }
 
 
@@ -425,7 +429,8 @@ fn parse_tripupdate(update: &TripUpdate) -> Option<(Ustr,UpdateData)> {
         vehicle_id: ustr(vehicle.id.as_ref()?),
         label: ustr(vehicle.label.as_ref()?),
         departure_update: departuretimes,
-        timestamp: update.timestamp? as i64
+        timestamp: update.timestamp? as i64,
+        schedulerelationship: update.trip.schedule_relationship()
     }))
 }
 
@@ -884,7 +889,7 @@ fn departures(_request: &Request, id: String) -> Response{
                     .into_iter()
                     .take(20)
                     .take_while(|stop| within_4_h(stop.depart, localnaivetime))
-                    .map(|stop| {
+                    .filter_map(|stop| {
                         let trip = trips.get(&stop.trip_id);
                         let route = trip.and_then(|t| routes.get(&t.route_id));
                         let scheduledDeparture: i64 = calculate_timestamp(stop.depart, localtime);
@@ -901,10 +906,13 @@ fn departures(_request: &Request, id: String) -> Response{
                                 delaySeconds = realtimeDeparture-scheduledDeparture;
                                 hasRealtime = true;
                             }
+                            if update.schedulerelationship == ScheduleRelationship::Canceled {
+                                return None;
+                            }
                         }
 
 
-                        JoinedStopData {
+                        Some(JoinedStopData {
                             stop,
                             scheduledDeparture,
                             delaySeconds,
@@ -913,8 +921,7 @@ fn departures(_request: &Request, id: String) -> Response{
                             status: if delaySeconds == 0 {"ON_TIME"} else {"DELAYED"},
                             trip,
                             route
-
-                        }
+                        })
                     }).collect();
 
             let jsondepartures : Value = json!({
@@ -939,11 +946,17 @@ fn alerts(_request: &Request) -> Response{
 }
 fn vehicles(_request: &Request) -> Response{
     let vehiclesguard = VEHICLES.load();
+    let routesguard = ROUTES.load();
 
-    match (&*vehiclesguard).as_ref() {
-        Some(arctuple) => {
+    match ((&*vehiclesguard).as_ref(),(&*routesguard).as_ref()) {
+        (Some(arctuple),Some(routearc)) => {
             let (map, timestamp) = &**arctuple;
-            let vehvec: Vec<&Vehicle> = map.values().collect();
+            let route = &**routearc;
+            let vehvec: Vec<Vehicle> = map.values().map(|v|
+                Vehicle {
+                    routeShortName: route.get(&v.routeId).map(|r| r.route_short_name).unwrap_or(ustr("")),
+                    ..v.clone()
+                }).collect();
             let json = json!({
                 "fetchedAt": timestamp,
                 "vehicles" : vehvec
@@ -951,7 +964,7 @@ fn vehicles(_request: &Request) -> Response{
 
             Response::text(json.to_string())
         },
-        None => jsonerror(500,"data load failure")
+        _ => jsonerror(500,"data load failure")
     }
 }
 
