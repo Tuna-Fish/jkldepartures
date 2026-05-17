@@ -22,6 +22,14 @@ function alertTitle(alert: ServiceAlert) {
   return `Route ${alert.affectedRoutes.join(', ')} — ${alert.headerText}`
 }
 
+function greetingText() {
+  const hour = new Date().getHours()
+  if (hour < 5) return 'Good night'
+  if (hour < 12) return 'Good morning'
+  if (hour < 18) return 'Good afternoon'
+  return 'Good evening'
+}
+
 export default function HomePage() {
   const { data: alertsData } = useAlerts()
   const activeAlerts = (alertsData?.alerts ?? []).filter(alert => !isResolved(alert))
@@ -32,7 +40,7 @@ export default function HomePage() {
       {/* Hero */}
       <div className="pt-8 pb-2 flex flex-col gap-1.5">
         <h1 className="text-[22px] font-bold tracking-tight text-slate-100">
-          Good morning
+          {greetingText()}
         </h1>
         <p className="text-[13px] text-slate-500">
           Jyväskylä public transport
