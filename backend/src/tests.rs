@@ -52,7 +52,8 @@ mod tests {
     }
 
     #[rstest]
-    #[case("service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\nS1,1,1,1,1,1,1,1,20000101,20991231", "service_id,date,exception_type\nS1,20260518,2", "DUMMY_CALENDAR")]
+    #[case("\"service_id\",\"monday\",\"tuesday\",\"wednesday\",\"thursday\",\"friday\",\"saturday\",\"sunday\",\"start_date\",\"end_date\"\n\"Koulp ei ke\",\"1\",\"1\",\"0\",\"1\",\"1\",\"0\",\"0\",\"20250807\",\"20260531\"\ntrash\n", "", "{u!(\"Koulp ei ke\")}")]
+    #[case("\"service_id\",\"monday\",\"tuesday\",\"wednesday\",\"thursday\",\"friday\",\"saturday\",\"sunday\",\"start_date\",\"end_date\"\n\"Koulp ei ke\",\"1\",\"1\",\"0\",\"1\",\"1\",\"0\",\"0\",\"20250807\",\"20260531\"", "", "{u!(\"Koulp ei ke\")}")]
     fn test_parse_calendar(#[case] cal: &str, #[case] dates: &str, #[case] expected: &str) {
         let offset = FixedOffset::east_opt(3*3600).unwrap();
         let localtime = NaiveDate::from_ymd_opt(2026, 5, 18).unwrap()
