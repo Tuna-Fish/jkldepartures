@@ -1,4 +1,4 @@
-# ADR-011: Testing Strategy
+# ADR-011: Frontend Testing Strategy
 
 ## Status
 
