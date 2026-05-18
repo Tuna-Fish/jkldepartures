@@ -6,7 +6,8 @@ import type { Stop } from '../../api/types'
 
 const SearchIcon = () => (
   <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
-    stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+    stroke="currentColor" strokeWidth={2}
+    strokeLinecap="round" strokeLinejoin="round">
     <circle cx="11" cy="11" r="7" />
     <path d="m21 21-4.35-4.35" />
   </svg>
@@ -14,24 +15,39 @@ const SearchIcon = () => (
 
 const ChevronIcon = () => (
   <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
-    stroke="#2a3347" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+    stroke="#2a3347" strokeWidth={2}
+    strokeLinecap="round" strokeLinejoin="round">
     <polyline points="9 18 15 12 9 6" />
   </svg>
 )
 
-export default function StopSearch() {
+interface StopSearchProps {
+  // When true, autofocuses the input — used on the dedicated search page
+  autoFocus?: boolean
+  // Override the placeholder text
+  placeholder?: string
+  // How many recent stops to show before the user types
+  recentCount?: number
+}
+
+export default function StopSearch({
+  autoFocus = false,
+  placeholder = 'Search stop name or number…',
+  recentCount = 4,
+}: StopSearchProps) {
   const [query, setQuery] = useState('')
   const navigate = useNavigate()
   const { data, isLoading, isError } = useStops()
 
   const stops = data?.stops ?? []
   const normalizedQuery = query.trim().toLowerCase()
-  const filtered = normalizedQuery.length > 0
+  const isSearching = normalizedQuery.length > 0
+  const filtered = isSearching
     ? stops.filter(s =>
         s.name.toLowerCase().includes(normalizedQuery) ||
         s.id.includes(normalizedQuery)
       )
-    : stops.slice(0, 4)
+    : stops.slice(0, recentCount)
 
   const handleSelect = (stop: Stop) => {
     navigate(`/stop/${stop.id}`)
@@ -48,18 +64,40 @@ export default function StopSearch() {
           type="text"
           value={query}
           onChange={e => setQuery(e.target.value)}
-          placeholder="Search stop name or number…"
+          placeholder={placeholder}
+          autoFocus={autoFocus}
+          autoComplete="off"
+          autoCorrect="off"
+          spellCheck={false}
           className="
             w-full bg-surface-raised border border-surface-border rounded-xl
-            pl-10 pr-4 py-3 text-[15px] text-slate-100 placeholder-slate-500
+            pl-10 pr-10 py-3 text-[15px] text-slate-100 placeholder-slate-500
             outline-none focus:border-accent font-sans transition-colors duration-150
           "
         />
+        {/* Clear button — only shown when typing */}
+        {isSearching && (
+          <button
+            onClick={() => setQuery('')}
+            className="absolute right-3 top-1/2 -translate-y-1/2
+              text-slate-500 hover:text-slate-300 transition-colors"
+            aria-label="Clear search"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" strokeWidth={2}
+              strokeLinecap="round" strokeLinejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+        )}
       </div>
 
       {/* Section label */}
       <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-widest">
-        {query.trim().length > 0 ? 'Results' : 'Recent stops'}
+        {isSearching
+          ? `${filtered.length} result${filtered.length !== 1 ? 's' : ''}`
+          : 'Recent stops'}
       </p>
 
       {/* Stop list */}
@@ -84,7 +122,8 @@ export default function StopSearch() {
               className="
                 w-full bg-surface-raised border border-surface-border rounded-xl
                 px-3.5 py-3 flex items-center gap-3
-                hover:border-accent transition-colors duration-150 text-left
+                hover:border-accent/40 active:scale-[0.99]
+                transition-all duration-150 text-left
               "
             >
               <span className="

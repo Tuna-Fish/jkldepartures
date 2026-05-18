@@ -82,8 +82,12 @@ export default function AppLayout({ children }: AppLayoutProps) {
 
   const isActive = (path: string) => {
     if (path === '/') return location.pathname === '/'
+    // Departures tab stays active on both /stop/search and /stop/:stopId
+    if (path === '/stop/search') {
+      return location.pathname.startsWith('/stop')
+    }
     return location.pathname.startsWith(path)
-  }
+}
 
   return (
     <div className="flex flex-col min-h-screen bg-surface-base">

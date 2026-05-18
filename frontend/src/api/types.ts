@@ -1,49 +1,47 @@
 // src/api/types.ts
 // ─────────────────────────────────────────────────────────────────────────────
-// Shared domain types for the Jyväskylä transit app.
-// These types are the contract between:
-//   - the frontend GTFS decoder (api/gtfs.ts) — current implementation
-//   - the Rust backend (future) — must return JSON matching these shapes
+// Shared domain types — contract between the frontend and the Rust backend.
 // ─────────────────────────────────────────────────────────────────────────────
 
-// ── Freshness ────────────────────────────────────────────────────────────────
+// ── Stops ─────────────────────────────────────────────────────────────────────
 
-/** Wraps any data payload with metadata about when it was fetched */
-export interface FreshData<T> {
-  data: T
-  fetchedAt: number   // Date.now() ms timestamp
-  isStale: boolean    // true if older than the feed's max age
-}
-
-// ── Stops ───────────────────────────────────────────────────────────────────
-
-export interface Stop {
-  id: string
+/** Full stop metadata as returned by GET /api/stops/:id */
+export interface StopMetadata {
+  stopId: string
+  id: string            // alias for stopId — used by StopSearch
   name: string
+  lat?: string          // raw string from backend
+  lon?: string
+  latitude?: number     // parsed float — populated by useStop hook
+  longitude?: number
+  zoneId?: string
+  zone_id?: string
+  locationType?: number
+  location_type?: string
+  municipalityId?: string
+  municipality_id?: string
+  wheelchairBoarding?: string
+  wheelchair_boarding?: string
+  platformCode?: string
+  platform_code?: string
+  vehicleType?: string
+  vehicle_type?: string
 }
 
-export interface StopMetadata extends Stop {
-  latitude?: number
-  longitude?: number
-  locationType?: string
-  municipalityId?: string
-  platformCode?: string
-  vehicleType?: string
-  wheelchairBoarding?: string
-  zoneId?: string
-}
+/** Backwards-compatible alias */
+export type Stop = StopMetadata
 
 export interface StopsResult {
+  fetchedAt: number
   stops: Stop[]
-  fetchedAt: number
 }
 
-export interface StopMetadataResult {
+export interface StopResult {
+  fetchedAt: number
   stop: StopMetadata
-  fetchedAt: number
 }
 
-// ── Service Alerts ───────────────────────────────────────────────────────────
+// ── Service Alerts ────────────────────────────────────────────────────────────
 
 export type AlertSeverity = 'INFO' | 'WARNING' | 'SEVERE' | 'UNKNOWN'
 export type AlertEffect =
@@ -63,15 +61,20 @@ export interface ServiceAlert {
   url?: string
 }
 
-// ── Trip Updates / Departures ─────────────────────────────────────────────────
+export interface AlertsResult {
+  fetchedAt: number
+  alerts: ServiceAlert[]
+}
+
+// ── Trip Updates (internal) ───────────────────────────────────────────────────
 
 export type ScheduleRelationship = 'SCHEDULED' | 'CANCELED' | 'ADDED' | 'UNSCHEDULED'
 export type StopStatus = 'SCHEDULED' | 'SKIPPED' | 'NO_DATA'
 
 export interface StopTimeUpdate {
   stopId: string
-  arrivalTime?: number    // Unix seconds
-  departureTime?: number  // Unix seconds
+  arrivalTime?: number
+  departureTime?: number
   status: StopStatus
 }
 
@@ -79,61 +82,13 @@ export interface TripUpdate {
   tripId: string
   routeId: string
   vehicleId?: string
-  vehicleLabel?: string   // headsign e.g. "Keskusta"
-  startTime: string       // "HH:MM:SS"
-  startDate: string       // "YYYYMMDD"
+  vehicleLabel?: string
+  startTime: string
+  startDate: string
   scheduleRelationship: ScheduleRelationship
   stopTimeUpdates: StopTimeUpdate[]
-  timestamp?: number      // when the vehicle last reported
+  timestamp?: number
 }
-
-// ── Vehicle Positions ─────────────────────────────────────────────────────────
-
-export type VehicleStopStatus =
-  | 'INCOMING_AT' | 'STOPPED_AT' | 'IN_TRANSIT_TO'
-
-export interface VehiclePosition {
-  vehicleId: string
-  vehicleLabel?: string   // headsign
-  tripId?: string
-  routeId?: string
-  latitude: number
-  longitude: number
-  bearing?: number        // degrees, 0 = north
-  speed?: number          // m/s
-  currentStopId?: string
-  currentStatus: VehicleStopStatus
-  timestamp: number       // Unix seconds
-}
-
-// ── Departure (derived type — computed by services/departures.ts) ─────────────
-// This is what the UI actually renders. It combines a TripUpdate
-// with enrichment (delay calculation, status derivation).
-
-export type DepartureStatus = 'ON_TIME' | 'DELAYED' | 'EARLY' | 'CANCELLED' | 'NO_DATA'
-
-export interface Departure {
-  tripId: string
-  routeId: string
-  routeShortName?: string
-  routeLongName?: string
-  headsign: string          // e.g. "Keskusta" or "Mattilanniemi"
-  scheduledDeparture: number  // Unix seconds
-  realtimeDeparture: number   // Unix seconds (same as scheduled if no realtime)
-  delaySeconds: number        // positive = late, negative = early
-  status: DepartureStatus
-  hasRealtime: boolean
-  vehicleId?: string
-  platform?: string
-}
-
-export interface DeparturesResult {
-  departures: Departure[]
-  fetchedAt: number
-}
-
-// ── Raw feed response wrappers ────────────────────────────────────────────────
-// Used internally by api/gtfs.ts — not exposed to components
 
 export interface RawFeedResult {
   tripUpdates: TripUpdate[]
@@ -148,4 +103,56 @@ export interface RawAlertResult {
 export interface RawVehicleResult {
   vehicles: VehiclePosition[]
   fetchedAt: number
+}
+
+// ── Departures ────────────────────────────────────────────────────────────────
+
+export type DepartureStatus = 'ON_TIME' | 'DELAYED' | 'EARLY' | 'CANCELLED' | 'NO_DATA'
+
+export interface Departure {
+  tripId: string
+  routeId: string
+  routeShortName?: string
+  routeLongName?: string
+  headsign: string
+  scheduledDeparture: number    // Unix seconds
+  realtimeDeparture: number     // Unix seconds
+  delaySeconds: number
+  status: DepartureStatus
+  hasRealtime: boolean
+  vehicleId?: string
+  platform?: string
+}
+
+export interface DeparturesResult {
+  fetchedAt: number
+  stopId?: string
+  departures: Departure[]
+}
+
+// ── Vehicle Positions ─────────────────────────────────────────────────────────
+
+export type VehicleStopStatus = 'INCOMING_AT' | 'STOPPED_AT' | 'IN_TRANSIT_TO'
+
+export interface VehiclePosition {
+  vehicleId: string
+  vehicleLabel?: string
+  tripId?: string
+  routeId?: string
+  /** Short route name e.g. "4" — joined from routes.txt by the backend */
+  routeShortName?: string
+  latitude: number
+  longitude: number
+  bearing?: number
+  /** Compass bearing derived from movement direction (may differ from GPS bearing) */
+  travelBearing?: number
+  speed?: number
+  currentStopId?: string
+  currentStatus: VehicleStopStatus
+  timestamp: number
+}
+
+export interface VehiclesResult {
+  fetchedAt: number
+  vehicles: VehiclePosition[]
 }

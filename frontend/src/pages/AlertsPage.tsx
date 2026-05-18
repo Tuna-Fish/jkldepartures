@@ -12,7 +12,7 @@ const SEVERITY_STYLES: Record<SeverityLevel, {
   border: string
   label: string
 }> = {
-  SEVERE:  {
+  SEVERE: {
     badge:  'bg-[#3a1010] text-[#f87171]',
     border: 'border-[#7f1d1d]',
     label:  'SEVERE',
@@ -47,7 +47,7 @@ function routeColour(routeId: string) {
   return ROUTE_COLOURS[routeId] ?? { bg: '#1e2535', text: '#94a3b8' }
 }
 
-function formatPeriod(end?: number): string {
+function formatPeriod(start?: number, end?: number): string {
   const nowSec = Date.now() / 1000
   if (end && end < nowSec) {
     const d = new Date(end * 1000)
@@ -56,6 +56,10 @@ function formatPeriod(end?: number): string {
   if (end) {
     const d = new Date(end * 1000)
     return `Active until ${d.toLocaleTimeString('fi-FI', { hour: '2-digit', minute: '2-digit' })} today`
+  }
+  if (start) {
+    const d = new Date(start * 1000)
+    return `Active since ${d.toLocaleTimeString('fi-FI', { hour: '2-digit', minute: '2-digit' })}`
   }
   return 'Active — no end time given'
 }
@@ -73,16 +77,16 @@ function AlertCard({ alert }: { alert: ServiceAlert }) {
   const period = alert.activePeriods[0]
 
   return (
-    <div className={`
-      bg-surface-raised border rounded-xl px-4 py-3.5
-      flex flex-col gap-3
-      ${s.border}
-      ${resolved ? 'opacity-60' : ''}
-    `}>
-      {/* Header row */}
+    <div
+      className={`
+        bg-surface-raised border rounded-xl px-4 py-3.5
+        flex flex-col gap-3
+        ${s.border}
+        ${resolved ? 'opacity-60' : ''}
+      `}
+    >
       <div className="flex items-center gap-2 flex-wrap">
-        {/* Affected route pills */}
-        {alert.affectedRoutes.map(r => {
+        {alert.affectedRoutes.map((r) => {
           const c = routeColour(r)
           return (
             <span
@@ -94,25 +98,23 @@ function AlertCard({ alert }: { alert: ServiceAlert }) {
             </span>
           )
         })}
-
         <p className="text-[14px] font-semibold text-slate-100 flex-1 min-w-0">
           {alert.headerText}
         </p>
-
-        <span className={`
-          text-[10px] font-semibold px-2 py-0.5 rounded-md
-          tracking-wide flex-shrink-0 ${s.badge}
-        `}>
+        <span
+          className={`
+            text-[10px] font-semibold px-2 py-0.5 rounded-md
+            tracking-wide flex-shrink-0 ${s.badge}
+          `}
+        >
           {s.label}
         </span>
       </div>
 
-      {/* Description */}
       <p className="text-[13px] text-slate-400 leading-relaxed">
         {alert.descriptionText}
       </p>
 
-      {/* Footer */}
       <p className="text-[11px] text-slate-600 border-t border-surface-border pt-2.5">
         {formatPeriod(period?.end)}
       </p>
@@ -123,12 +125,12 @@ function AlertCard({ alert }: { alert: ServiceAlert }) {
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function AlertsPage() {
-  const { data, isLoading, isError } = useAlerts()
-  const fetchedAt = data?.fetchedAt ?? null
-  const alerts = data?.alerts ?? []
+  const { data: alerts, isLoading, isError } = useAlerts()
+  const fetchedAt = null
+  const safeAlerts = alerts?.alerts ?? []
 
-  const active   = alerts.filter(a => !isResolved(a))
-  const resolved = alerts.filter(a =>  isResolved(a))
+  const active   = safeAlerts.filter((a: ServiceAlert) => !isResolved(a))
+  const resolved = safeAlerts.filter((a: ServiceAlert) =>  isResolved(a))
 
   return (
     <div className="flex flex-col">
@@ -166,8 +168,8 @@ export default function AlertsPage() {
           <div className="bg-surface-raised border border-surface-border
             rounded-xl px-4 py-8 flex flex-col items-center gap-2 text-center">
             <svg width="32" height="32" viewBox="0 0 24 24" fill="none"
-              stroke="#4ade80" strokeWidth={1.5} strokeLinecap="round"
-              strokeLinejoin="round">
+              stroke="#4ade80" strokeWidth={1.5}
+              strokeLinecap="round" strokeLinejoin="round">
               <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
               <polyline points="22 4 12 14.01 9 11.01" />
             </svg>
@@ -180,21 +182,23 @@ export default function AlertsPage() {
           </div>
         ) : (
           <>
-            <p className="text-[11px] font-semibold text-slate-500
-              uppercase tracking-widest">
+            <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-widest">
               Active now
             </p>
-            {active.map(a => <AlertCard key={a.id} alert={a} />)}
+            {active.map((a: ServiceAlert) => (
+              <AlertCard key={a.id} alert={a} />
+            ))}
           </>
         )}
 
         {resolved.length > 0 && (
           <>
-            <p className="text-[11px] font-semibold text-slate-500
-              uppercase tracking-widest mt-2">
+            <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-widest mt-2">
               Earlier today
             </p>
-            {resolved.map(a => <AlertCard key={a.id} alert={a} />)}
+            {resolved.map((a: ServiceAlert) => (
+              <AlertCard key={a.id} alert={a} />
+            ))}
           </>
         )}
       </div>

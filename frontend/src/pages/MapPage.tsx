@@ -1,9 +1,11 @@
 // src/pages/MapPage.tsx
-import { MapContainer, TileLayer, Marker, Popup, Circle } from 'react-leaflet'
-import { useEffect } from 'react'
+import { MapContainer, TileLayer, Marker, Popup, Circle, useMapEvents } from 'react-leaflet'
+import { useEffect, useMemo, useState } from 'react'
 import L from 'leaflet'
 import FreshnessIndicator from '../components/FreshnessIndicator'
-import type { VehiclePosition } from '../api/types'
+import type { StopMetadata, VehiclePosition } from '../api/types'
+import { useStopMarkers } from '../hooks/useStops'
+import { useVehicles } from '../hooks/useVehicles'
 
 // Fix Leaflet's broken default icon paths when bundled with Vite
 delete (L.Icon.Default.prototype as unknown as Record<string, unknown>)._getIconUrl
@@ -13,29 +15,67 @@ L.Icon.Default.mergeOptions({
   shadowUrl:     'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
 })
 
-// ── Custom vehicle marker ─────────────────────────────────────────────────────
+// ── Constants ─────────────────────────────────────────────────────────────────
+
+const JKL_CENTRE: [number, number] = [62.2415, 25.7482]
 
 const ROUTE_COLOURS: Record<string, string> = {
   '1': '#C62828', '4': '#1565C0', '7': '#E65100',
   '9': '#00695C', '12': '#2E7D32', '25': '#6A1B9A',
 }
 
-function vehicleIcon(routeId: string) {
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max)
+}
+
+function markerZoomScale(zoom: number): number {
+  return clamp(0.68 + (zoom - 12) * 0.16, 0.68, 1.8)
+}
+
+function vehicleIcon(routeId: string, bearing?: number, zoom = 14) {
   const colour = ROUTE_COLOURS[routeId] ?? '#2979FF'
+  const scale = markerZoomScale(zoom)
+  const circleRadius = 9 * scale
+  const circleDiameter = circleRadius * 2
+  const arrowWidth = circleDiameter
+  const arrowHeight = 11 * scale
+  const gap = 3 * scale
+  const padding = 3 * scale
+  const width = circleDiameter + padding * 2
+  const height = arrowHeight + gap + circleDiameter + padding * 2
+  const centerX = width / 2
+  const circleCenterY = padding + arrowHeight + gap + circleRadius
+  const arrowTipY = padding
+  const arrowBaseY = padding + arrowHeight
+  const arrowRotation = bearing ?? 0
+  const fontSize = Math.max(8, 9 * scale)
   const svg = `
-    <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
-      <circle cx="16" cy="16" r="13" fill="${colour}" opacity="0.25"/>
-      <circle cx="16" cy="16" r="9" fill="${colour}"/>
-      <text x="16" y="20" text-anchor="middle"
-        font-family="DM Mono,monospace" font-size="9"
+    <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"
+      viewBox="0 0 ${width} ${height}" overflow="visible">
+      <g transform="rotate(${arrowRotation} ${centerX} ${circleCenterY})">
+        <path
+          d="M ${centerX} ${arrowTipY}
+             L ${centerX + arrowWidth / 2} ${arrowBaseY}
+             L ${centerX + arrowWidth * 0.16} ${arrowBaseY}
+             L ${centerX} ${arrowBaseY - arrowHeight * 0.34}
+             L ${centerX - arrowWidth * 0.16} ${arrowBaseY}
+             L ${centerX - arrowWidth / 2} ${arrowBaseY}
+             Z"
+          fill="${colour}"
+        />
+      </g>
+      <circle cx="${centerX}" cy="${circleCenterY}" r="${circleRadius + 4 * scale}" fill="${colour}" opacity="0.25"/>
+      <circle cx="${centerX}" cy="${circleCenterY}" r="${circleRadius}" fill="${colour}"/>
+      <text x="${centerX}" y="${circleCenterY + fontSize * 0.36}" text-anchor="middle"
+        font-family="DM Mono,monospace" font-size="${fontSize}"
         font-weight="700" fill="white">${routeId}</text>
     </svg>`
   return L.divIcon({
     html: svg,
     className: '',
-    iconSize: [32, 32],
-    iconAnchor: [16, 16],
-    popupAnchor: [0, -18],
+    iconSize: [width, height],
+    iconAnchor: [centerX, circleCenterY],
+    popupAnchor: [0, -circleRadius - arrowHeight - gap],
   })
 }
 
@@ -53,74 +93,31 @@ function stopIcon() {
   })
 }
 
-// ── Mock data ─────────────────────────────────────────────────────────────────
-// Replace with useVehiclePositions() hook in Step 4
-
-const MOCK_VEHICLES: VehiclePosition[] = [
-  {
-    vehicleId: 'v1', vehicleLabel: 'Mattilanniemi',
-    tripId: 'trip-1', routeId: '4',
-    latitude: 62.2415, longitude: 25.7479,
-    bearing: 45, speed: 8.3,
-    currentStatus: 'IN_TRANSIT_TO',
-    currentStopId: '1111',
-    timestamp: Math.floor(Date.now() / 1000) - 5,
-  },
-  {
-    vehicleId: 'v2', vehicleLabel: 'Keljonkangas',
-    tripId: 'trip-2', routeId: '12',
-    latitude: 62.2318, longitude: 25.7601,
-    bearing: 180, speed: 0,
-    currentStatus: 'STOPPED_AT',
-    currentStopId: '3041',
-    timestamp: Math.floor(Date.now() / 1000) - 2,
-  },
-  {
-    vehicleId: 'v3', vehicleLabel: 'Kuokkala',
-    tripId: 'trip-3', routeId: '7',
-    latitude: 62.2498, longitude: 25.7312,
-    bearing: 270, speed: 11.1,
-    currentStatus: 'IN_TRANSIT_TO',
-    currentStopId: '1084',
-    timestamp: Math.floor(Date.now() / 1000) - 8,
-  },
-  {
-    vehicleId: 'v4', vehicleLabel: 'Seppälä',
-    tripId: 'trip-4', routeId: '25',
-    latitude: 62.2551, longitude: 25.7689,
-    bearing: 90, speed: 6.9,
-    currentStatus: 'IN_TRANSIT_TO',
-    currentStopId: '2110',
-    timestamp: Math.floor(Date.now() / 1000) - 3,
-  },
-  {
-    vehicleId: 'v5', vehicleLabel: 'Tikkakoski',
-    tripId: 'trip-5', routeId: '9',
-    latitude: 62.2382, longitude: 25.7821,
-    bearing: 0, speed: 14.0,
-    currentStatus: 'IN_TRANSIT_TO',
-    timestamp: Math.floor(Date.now() / 1000) - 12,
-  },
-]
-
-const MOCK_STOPS = [
-  { id: '1111', name: 'Keskusta (M)',  lat: 62.2415, lng: 25.7482 },
-  { id: '3041', name: 'Yliopisto',     lat: 62.2320, lng: 25.7598 },
-  { id: '1084', name: 'Hämeenkatu',   lat: 62.2501, lng: 25.7308 },
-]
-
 // ── Sub-components ────────────────────────────────────────────────────────────
 
-function statusLabel(v: VehiclePosition): string {
+function routeLabel(v: VehiclePosition): string {
+  return v.routeShortName || v.routeId || '?'
+}
+
+function speedKmh(speed: number | undefined): number {
+  if (!speed) return 0
+
+  // Some backend values arrive as centimetres per second from the GTFS source.
+  const metresPerSecond = speed > 60 ? speed / 100 : speed
+  return Math.round(metresPerSecond * 3.6)
+}
+
+function vehicleStatusLabel(v: VehiclePosition): string {
   const age = Math.floor(Date.now() / 1000) - v.timestamp
   const ageStr = age < 60 ? `${age}s ago` : `${Math.floor(age / 60)}m ago`
   if (v.currentStatus === 'STOPPED_AT') return `At stop · ${ageStr}`
-  const kmh = v.speed ? Math.round(v.speed * 3.6) : 0
+  const kmh = speedKmh(v.speed)
   return `${kmh} km/h · ${ageStr}`
 }
 
 function VehicleListRow({ v }: { v: VehiclePosition }) {
-  const colour = ROUTE_COLOURS[v.routeId ?? ''] ?? '#2979FF'
+  const label = routeLabel(v)
+  const colour = ROUTE_COLOURS[label] ?? '#2979FF'
   const moving = v.currentStatus !== 'STOPPED_AT'
 
   return (
@@ -131,15 +128,15 @@ function VehicleListRow({ v }: { v: VehiclePosition }) {
           text-[13px] font-bold font-display flex-shrink-0"
         style={{ backgroundColor: colour, color: '#fff' }}
       >
-        {v.routeId}
+        {label}
       </div>
       <div className="flex-1 min-w-0">
         <p className="text-[13px] font-medium text-slate-100 truncate">
-          Route {v.routeId}
+          Route {label}
           {v.vehicleLabel ? ` — ${v.vehicleLabel}` : ''}
         </p>
         <p className="text-[11px] text-slate-500 mt-0.5">
-          {statusLabel(v)}
+          {vehicleStatusLabel(v)}
         </p>
       </div>
       <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-md ${
@@ -153,13 +150,49 @@ function VehicleListRow({ v }: { v: VehiclePosition }) {
   )
 }
 
+function hasStopCoordinates(stop: StopMetadata): stop is StopMetadata & {
+  latitude: number
+  longitude: number
+} {
+  return stop.latitude !== undefined && stop.longitude !== undefined
+}
+
+function ZoomTracker({ onZoomChange }: { onZoomChange: (zoom: number) => void }) {
+  useMapEvents({
+    zoomend: event => {
+      onZoomChange(event.target.getZoom())
+    },
+  })
+
+  return null
+}
+
 // ── Page ──────────────────────────────────────────────────────────────────────
 
-// Jyväskylä city centre
-const JKL_CENTRE: [number, number] = [62.2415, 25.7482]
-
 export default function MapPage() {
-  const fetchedAt = Date.now()
+  const [mapZoom, setMapZoom] = useState(14)
+  const {
+    data: vehiclesData,
+    isLoading: isVehiclesLoading,
+    isError: isVehiclesError,
+  } = useVehicles() as {
+    data?: { vehicles?: VehiclePosition[]; fetchedAt?: number }
+    isLoading: boolean
+    isError: boolean
+  }
+  const vehicles = useMemo(() => vehiclesData?.vehicles ?? [], [vehiclesData?.vehicles])
+  const stopIds = useMemo(() => (
+    Array.from(new Set(
+      vehicles
+        .map(vehicle => vehicle.currentStopId)
+        .filter((stopId): stopId is string => stopId !== undefined && stopId.length > 0),
+    ))
+  ), [vehicles])
+  const stopQueries = useStopMarkers(stopIds)
+  const stops = stopQueries
+    .map(query => query.data?.stop)
+    .filter((stop): stop is StopMetadata => stop !== undefined)
+    .filter(hasStopCoordinates)
 
   // Suppress SSR warning from react-leaflet
   useEffect(() => {}, [])
@@ -172,7 +205,7 @@ export default function MapPage() {
         <p className="flex-1 text-[15px] font-semibold text-slate-100">
           Live vehicles
         </p>
-        <FreshnessIndicator fetchedAt={fetchedAt} staleAfterMs={10_000} />
+        <FreshnessIndicator fetchedAt={vehiclesData?.fetchedAt ?? null} staleAfterMs={10_000} />
       </div>
 
       <div className="flex flex-col gap-4 px-4 pt-4 pb-6">
@@ -185,16 +218,17 @@ export default function MapPage() {
             style={{ height: '100%', width: '100%' }}
             zoomControl={false}
           >
+            <ZoomTracker onZoomChange={setMapZoom} />
             <TileLayer
               attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
               url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
             />
 
             {/* Stop markers */}
-            {MOCK_STOPS.map(stop => (
+            {stops.map(stop => (
               <Marker
                 key={stop.id}
-                position={[stop.lat, stop.lng]}
+                position={[stop.latitude, stop.longitude]}
                 icon={stopIcon()}
               >
                 <Popup>
@@ -208,30 +242,33 @@ export default function MapPage() {
             ))}
 
             {/* Vehicle markers */}
-            {MOCK_VEHICLES.map(v => (
+            {vehicles.map(v => {
+              const label = routeLabel(v)
+              const colour = ROUTE_COLOURS[label] ?? '#2979FF'
+
+              return (
               <Marker
                 key={v.vehicleId}
                 position={[v.latitude, v.longitude]}
-                icon={vehicleIcon(v.routeId ?? '?')}
+                icon={vehicleIcon(label, v.travelBearing ?? v.bearing, mapZoom)}
               >
                 <Popup>
                   <div style={{ fontFamily: 'DM Sans, sans-serif', fontSize: 13 }}>
-                    <strong>Route {v.routeId}</strong>
+                    <strong>Route {label}</strong>
                     {v.vehicleLabel && (
                       <> → {v.vehicleLabel}</>
                     )}
                     <br />
-                    <span style={{ color: '#64748b' }}>{statusLabel(v)}</span>
+                    <span style={{ color: '#64748b' }}>{vehicleStatusLabel(v)}</span>
                   </div>
                 </Popup>
-                {/* Pulse ring for moving vehicles */}
                 {v.currentStatus !== 'STOPPED_AT' && (
                   <Circle
                     center={[v.latitude, v.longitude]}
                     radius={40}
                     pathOptions={{
-                      color: ROUTE_COLOURS[v.routeId ?? ''] ?? '#2979FF',
-                      fillColor: ROUTE_COLOURS[v.routeId ?? ''] ?? '#2979FF',
+                      color: colour,
+                      fillColor: colour,
                       fillOpacity: 0.08,
                       weight: 1,
                       opacity: 0.3,
@@ -239,17 +276,29 @@ export default function MapPage() {
                   />
                 )}
               </Marker>
-            ))}
+              )
+            })}
           </MapContainer>
         </div>
 
         {/* Vehicle list */}
-        <p className="text-[11px] font-semibold text-slate-500
-          uppercase tracking-widest">
+        <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-widest">
           Nearby vehicles
         </p>
         <div className="flex flex-col gap-2.5">
-          {MOCK_VEHICLES.map(v => (
+          {isVehiclesLoading ? (
+            <p className="text-[13px] text-slate-500 py-4 text-center">
+              Loading vehicles…
+            </p>
+          ) : isVehiclesError ? (
+            <p className="text-[13px] text-rose-300 py-4 text-center">
+              Vehicles could not be loaded.
+            </p>
+          ) : vehicles.length === 0 ? (
+            <p className="text-[13px] text-slate-500 py-4 text-center">
+              No live vehicles available.
+            </p>
+          ) : vehicles.map(v => (
             <VehicleListRow key={v.vehicleId} v={v} />
           ))}
         </div>

@@ -46,25 +46,22 @@ function alertTitle(alert: ServiceAlert): string {
 
 export default function StopPage() {
   const { stopId = '' } = useParams()
+  console.log('[StopPage] stopId from params:', stopId)
   const navigate = useNavigate()
-  const {
-    data: stopData,
-    isLoading: isStopLoading,
-    isError: isStopError,
-  } = useStop(stopId)
+  const stopQuery = useStop(stopId)
+  const stopData = stopQuery.data
+  const { isLoading: isStopLoading, isError: isStopError } = stopQuery
   const { data: alertsData } = useAlerts()
-  const {
-    data: departuresData,
-    isLoading,
-    isError,
-  } = useDepartures(stopId)
+  const departuresQuery = useDepartures(stopId)
+  const departures = departuresQuery.data?.departures ?? []
+  const departuresFetchedAt = departuresQuery.data?.fetchedAt
+  const { isLoading, isError } = departuresQuery
 
   const stop = stopData?.stop
-  const departures = departuresData?.departures ?? []
   const stopAlerts = (alertsData?.alerts ?? [])
     .filter(alert => !isResolved(alert) && isAlertForStop(alert, stopId))
   const stopName = stop?.name ?? (isStopLoading ? 'Loading stop…' : `Stop ${stopId}`)
-  const fetchedAt = departuresData?.fetchedAt ?? stopData?.fetchedAt ?? null
+  const fetchedAt = departuresFetchedAt ?? stopData?.fetchedAt ?? null
   const coordinates = stop?.latitude !== undefined && stop.longitude !== undefined
     ? `${stop.latitude.toFixed(5)}, ${stop.longitude.toFixed(5)}`
     : undefined
@@ -91,7 +88,7 @@ export default function StopPage() {
         <p className="flex-1 text-[15px] font-semibold text-slate-100 truncate">
           {stopName}
         </p>
-        <FreshnessIndicator fetchedAt={fetchedAt} />
+        <FreshnessIndicator fetchedAt={fetchedAt} staleAfterMs={45_000} />
       </div>
 
       {/* Content */}
