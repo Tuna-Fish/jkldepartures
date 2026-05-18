@@ -160,9 +160,13 @@ impl StaticFetcher {
             filemap.insert(name, contents);
         }
 
+        let offset = FixedOffset::east_opt(3*3600).expect("invalid_offset");
+        let localtime = Utc::now().with_timezone(&offset);
+
         let calendar = parse_calendar(
             filemap.get("calendar.txt").ok_or("missing calendar")?,
-            filemap.get("calendar_dates.txt").ok_or("missing calendar_dates")?);
+            filemap.get("calendar_dates.txt").ok_or("missing calendar_dates")?,
+            localtime);
 
 
         let stopsmap = parse_stop_names(filemap.get("stops.txt")
@@ -631,11 +635,8 @@ fn parse_calendar_dates_record(record: &ByteRecord, datestr: &str) -> Option<(Us
     } else { None }
 }
 
-fn parse_calendar(calendartxt: &Vec<u8>, calendar_datestxt: &Vec<u8>) -> UstrSet {
+fn parse_calendar(calendartxt: &Vec<u8>, calendar_datestxt: &Vec<u8>, localtime: DateTime<FixedOffset>) -> UstrSet {
     let mut calendar = UstrSet::default();
-        //eternal summer time
-    let offset = FixedOffset::east_opt(3*3600).expect("invalid_offset");
-    let localtime= Utc::now().with_timezone(&offset);
     let formatted_date = localtime.format("%Y%m%d").to_string();
     let weekday = localtime.weekday().number_from_monday();
 
