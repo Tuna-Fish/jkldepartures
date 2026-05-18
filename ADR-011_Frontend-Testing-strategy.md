@@ -74,7 +74,6 @@ We adopt an incremental, expanding testing strategy:
 * **Unit testing:** Jest (fast, known to the team)
 * **System/browser testing:** Playwright (broad browser and CI support, team familiarity)
 * **Acceptance testing:** Real users perform tasks with the software, with observations and feedback collected
-* **Backend stress testing:** Load tests, such as large numbers of users
 
 ---
 
