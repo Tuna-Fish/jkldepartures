@@ -1,9 +1,5 @@
 # ADR-006: Vite
 
-## Title
-
-Vite as the build tool for frontend development
-
 ## Status
 
 Proposed
