@@ -29,6 +29,9 @@ use chrono::{FixedOffset,NaiveTime,DateTime,TimeDelta,Utc,Timelike,Local,Datelik
 use ustr::{Ustr, ustr,UstrMap,UstrSet};
 use std::cmp::Ordering;
 
+#[cfg(test)]
+mod tests;
+
 static CALENDAR: ArcSwapOption<UstrSet> = ArcSwapOption::const_empty();
 static ALERTS: ArcSwapOption<String> = ArcSwapOption::const_empty();
 static STOP_NAMES: ArcSwapOption<UstrMap<Ustr>> = ArcSwapOption::const_empty();
